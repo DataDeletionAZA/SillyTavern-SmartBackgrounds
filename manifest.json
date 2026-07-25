@@ -1,0 +1,20 @@
+{
+    "display_name": "Smart Backgrounds / 智能背景",
+    "loading_order": 30,
+    "requires": [],
+    "optional": [],
+    "js": "dist/index.js",
+    "css": "style.css",
+    "author": "Aza",
+    "version": "0.1.0",
+    "homePage": "https://github.com/DataDeletionAZA/SillyTavern-SmartBackgrounds",
+    "auto_update": true,
+    "minimum_client_version": "1.18.0",
+    "i18n": {
+        "zh-cn": "i18n/zh-cn.json",
+        "zh-tw": "i18n/zh-tw.json"
+    },
+    "hooks": {
+        "activate": "init"
+    }
+}
