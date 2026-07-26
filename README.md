@@ -7,7 +7,7 @@ It solves two opposite problems:
 - Small but beautiful illustrations can have blurred edges and missing-looking details reconstructed locally with Real-ESRGAN.
 - Extremely large images can be resized to a screen-appropriate 4K-class copy so switching backgrounds uses much less memory.
 
-The processed result replaces the original in the gallery without destroying it immediately. An **Undo** bar remains visible while the Backgrounds drawer is open. Closing the drawer confirms the result, deletes the old file, and keeps the optimized WebP.
+After processing, a side-by-side window lets you compare the original and processed images, enlarge either image, and rename the result. The result replaces the original only after confirmation. An **Undo** bar then remains visible while the Backgrounds drawer is open. Closing the drawer confirms the result, deletes the old file, and keeps the optimized WebP.
 
 ## Features
 
@@ -18,9 +18,11 @@ The processed result replaces the original in the gallery without destroying it 
 - Overlapping tile-based processing, visible progress, and cancellation so memory use stays bounded.
 - 4096-pixel maximum long edge and high-quality WebP output.
 - Simplified Chinese, Traditional Chinese, and English interface.
+- Side-by-side, click-to-enlarge comparison before anything is replaced.
+- Editable, Windows-safe output filenames with conflict protection.
 - Transactional replacement: the original stays recoverable until the Backgrounds drawer is closed.
 - One-click Undo deletes the unsatisfactory result and restores the original.
-- Unique temporary output names prevent a new run from overwriting an earlier result.
+- Phone and tablet guard: processed backgrounds remain usable, but memory-heavy image processing cannot be started on mobile.
 
 ## Install
 
@@ -40,9 +42,10 @@ In SillyTavern:
 2. Click the sparkle-wand action on a background, or select a background and click **Smart Optimize** at the top.
 3. Review the detected plan.
 4. Click **Start processing**.
-5. The optimized result replaces the original in the gallery and is selected automatically.
-6. If the result is not good, click **Undo** before closing the Backgrounds drawer. The new file is deleted and the original is restored.
-7. If the result is good, close the Backgrounds drawer. That confirms the replacement and deletes the old file.
+5. Compare the original and processed images. Click either preview to enlarge it, and edit the new filename if desired.
+6. Choose **Use the processed image** to replace the gallery entry, or **Keep the original** to discard the temporary result.
+7. After accepting the processed image, click **Undo** before closing the Backgrounds drawer if you change your mind. The new file is deleted and the original is restored.
+8. If the result is good, close the Backgrounds drawer. That confirms the replacement and deletes the old file.
 
 AI restoration is a one-time process. Later background switches load the generated WebP directly.
 
@@ -57,9 +60,16 @@ Image pixels stay in the browser running SillyTavern. Models are included with t
 ## Compatibility
 
 - SillyTavern 1.18.0 or newer.
+- macOS, Windows, and Linux hosts. Output names are normalized for Windows restrictions and checked case-insensitively before upload.
 - A current Chromium-based browser with WebGPU is recommended. Other modern browsers can use the slower CPU fallback.
 - The extension download is roughly 41 MB because the actual restoration model and its local runtime are included.
 - Static image backgrounds are supported. Animated backgrounds are intentionally not processed.
+
+### Phones and tablets
+
+The extension can be visible on a phone, and backgrounds already processed on a computer work normally there. Image processing itself is disabled on phones and tablets because the model, its runtime, and the enlarged output canvas can exceed a mobile browser's memory limit.
+
+The model is loaded by the browser only after desktop processing starts. Merely opening SillyTavern on a phone does not fetch the model into that browser. Extension installation happens on the machine hosting SillyTavern, however, and the repository includes the model. Therefore, if SillyTavern itself is hosted and the extension is installed directly on an Android device, the model files still occupy storage on that Android device even though processing is blocked.
 
 ## Development
 

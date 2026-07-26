@@ -7,8 +7,10 @@ import {
     chooseAiScale,
     classifyImage,
     fitWithinLongEdge,
+    isMobilePlatform,
     makeOutputName,
-    makePendingOutputName,
+    makeUniqueWebpFilename,
+    normalizeWebpFilename,
     shouldCommitReplacement,
 } from '../src/core.js';
 
@@ -66,15 +68,36 @@ test('creates stable WebP output names', () => {
     assert.equal(makeOutputName('pretty room-smart-ai.webp', 'downscale'), 'pretty room-smart-optimized.webp');
 });
 
-test('creates conflict-safe names for reversible replacements', () => {
+test('normalizes user filenames for Windows without removing Chinese', () => {
     assert.equal(
-        makePendingOutputName('pretty room.jpg', 'ai', 'A1B2-C3D4'),
-        'pretty room-smart-ai-a1b2-c3d4.webp',
+        normalizeWebpFilename('  左下角有猫猫:夜景?.jpg  '),
+        '左下角有猫猫_夜景_.webp',
+    );
+    assert.equal(normalizeWebpFilename('CON.png'), '_CON.webp');
+    assert.equal(normalizeWebpFilename('room... '), 'room.webp');
+    assert.equal(normalizeWebpFilename('  '), '');
+});
+
+test('creates conflict-safe names using case-insensitive comparisons', () => {
+    assert.equal(
+        makeUniqueWebpFilename('Pretty Room.webp', ['pretty room.WEBP']),
+        'Pretty Room-2.webp',
     );
     assert.equal(
-        makePendingOutputName('pretty room-smart-ai-oldresult.webp', 'downscale', 'next'),
-        'pretty room-smart-optimized-next.webp',
+        makeUniqueWebpFilename('夜景.webp', ['夜景.webp', '夜景-2.webp']),
+        '夜景-3.webp',
     );
+});
+
+test('detects phones and tablets but not Windows touch computers', () => {
+    assert.equal(isMobilePlatform({ userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0)' }), true);
+    assert.equal(isMobilePlatform({ userAgent: 'Mozilla/5.0 (Linux; Android 15; Pixel 9)' }), true);
+    assert.equal(isMobilePlatform({ platform: 'MacIntel', maxTouchPoints: 5 }), true);
+    assert.equal(isMobilePlatform({
+        userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        platform: 'Win32',
+        maxTouchPoints: 10,
+    }), false);
 });
 
 test('commits only when the open Backgrounds drawer is closed', () => {

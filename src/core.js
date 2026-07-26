@@ -121,20 +121,63 @@ export function makeOutputName(filename, mode) {
 }
 
 /**
- * Give every reversible replacement its own filename. This prevents a new run
- * from overwriting an older optimized image before the user has accepted it.
+ * Normalize a user-editable WebP filename for macOS, Linux, and Windows.
+ * Chinese and other Unicode characters are preserved.
  *
- * @param {string} filename
- * @param {'ai'|'downscale'|'compress'} mode
- * @param {string} transactionId
+ * @param {string} value
  */
-export function makePendingOutputName(filename, mode, transactionId) {
-    const readableName = makeOutputName(filename, mode).replace(/\.webp$/i, '');
-    const safeId = String(transactionId)
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]/g, '')
-        .slice(0, 16) || 'pending';
-    return `${readableName}-${safeId}.webp`;
+export function normalizeWebpFilename(value) {
+    let base = String(value ?? '')
+        .trim()
+        .replace(/\.(avif|bmp|gif|jpe?g|png|webp)$/i, '')
+        .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '_')
+        .replace(/[. ]+$/g, '')
+        .trim()
+        .slice(0, 160);
+
+    if (!base) return '';
+    if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(base)) {
+        base = `_${base}`;
+    }
+
+    return `${base}.webp`;
+}
+
+/**
+ * Make a filename unique without relying on case-sensitive filesystem rules.
+ * This matters on most Windows installations and on default macOS volumes.
+ *
+ * @param {string} preferredName
+ * @param {Iterable<string>} existingNames
+ */
+export function makeUniqueWebpFilename(preferredName, existingNames) {
+    const normalized = normalizeWebpFilename(preferredName);
+    if (!normalized) return '';
+
+    const occupied = new Set(
+        Array.from(existingNames ?? [], value => String(value).toLocaleLowerCase()),
+    );
+    if (!occupied.has(normalized.toLocaleLowerCase())) return normalized;
+
+    const base = normalized.replace(/\.webp$/i, '');
+    for (let index = 2; index < 10_000; index++) {
+        const candidate = `${base}-${index}.webp`;
+        if (!occupied.has(candidate.toLocaleLowerCase())) return candidate;
+    }
+
+    return `${base}-${Date.now()}.webp`;
+}
+
+/**
+ * Detect phones and tablets without treating Windows touch-screen computers as
+ * mobile devices.
+ *
+ * @param {{userAgent?:string, userAgentDataMobile?:boolean, platform?:string, maxTouchPoints?:number}} platform
+ */
+export function isMobilePlatform(platform = {}) {
+    if (platform.userAgentDataMobile === true) return true;
+    if (/Android|iPhone|iPad|iPod|Mobile/i.test(String(platform.userAgent ?? ''))) return true;
+    return platform.platform === 'MacIntel' && Number(platform.maxTouchPoints) > 1;
 }
 
 /**

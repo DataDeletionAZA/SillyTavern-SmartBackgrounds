@@ -6,10 +6,12 @@ import { Popup, POPUP_RESULT, POPUP_TYPE } from '/scripts/popup.js';
 import {
     DEFAULT_SETTINGS,
     classifyImage,
-    decodedMemoryMiB,
     fitWithinLongEdge,
     formatBytes,
-    makePendingOutputName,
+    isMobilePlatform,
+    makeOutputName,
+    makeUniqueWebpFilename,
+    normalizeWebpFilename,
     shouldCommitReplacement,
 } from './core.js';
 import { restoreIllustration } from './realesrgan.js';
@@ -195,6 +197,10 @@ async function openOptimizer(filename) {
         toastr.warning(t`Please undo the current replacement or close Backgrounds to confirm it before processing another image.`);
         return;
     }
+    if (isCurrentDeviceMobile()) {
+        toastr.warning(t`Processing is disabled on phones and tablets to protect the browser from running out of memory. You can still use backgrounds processed on a computer.`);
+        return;
+    }
 
     let analysis;
     try {
@@ -222,6 +228,15 @@ async function openOptimizer(filename) {
     }
 
     await processBackground(analysis, plan);
+}
+
+function isCurrentDeviceMobile() {
+    return isMobilePlatform({
+        userAgent: navigator.userAgent,
+        userAgentDataMobile: navigator.userAgentData?.mobile,
+        platform: navigator.platform,
+        maxTouchPoints: navigator.maxTouchPoints,
+    });
 }
 
 async function analyzeBackground(filename) {
@@ -283,21 +298,16 @@ function buildAnalysisView(analysis, plan) {
     appendInfo(info, t`File`, analysis.filename);
     appendInfo(info, t`Original size`, `${analysis.width} × ${analysis.height}`);
     appendInfo(info, t`File size`, formatBytes(analysis.bytes));
-    appendInfo(info, t`Decoded memory`, `≈ ${decodedMemoryMiB(analysis.width, analysis.height).toFixed(0)} MB`);
     appendInfo(info, t`Planned output`, `${target.width} × ${target.height} WebP`);
-
-    const explanation = document.createElement('p');
-    explanation.className = 'smart-backgrounds-explanation';
-    explanation.textContent = planExplanation(plan);
 
     const safety = document.createElement('div');
     safety.className = 'smart-backgrounds-safety';
     safety.innerHTML = `
         <i class="fa-solid fa-shield-heart"></i>
-        <span>${escapeHtml(t`The new result will replace this background in the gallery. The original stays recoverable until you close Backgrounds, and Undo restores it.`)}</span>
+        <span>${escapeHtml(t`After processing, compare both images and choose whether to replace the original.`)}</span>
     `;
 
-    details.append(title, badge, info, explanation, safety);
+    details.append(title, badge, info, safety);
     content.append(preview, details);
     return content;
 }
@@ -311,7 +321,7 @@ function appendInfo(list, label, value) {
 }
 
 function planTitle(plan) {
-    if (plan.mode === 'ai') return t`Local AI detail restoration ×4`;
+    if (plan.mode === 'ai') return t`Illustration detail restoration ×4`;
     if (plan.mode === 'downscale') return t`High-resolution performance optimization`;
     return t`Loss-conscious compression`;
 }
@@ -322,27 +332,24 @@ function planIcon(mode) {
     return 'fa-solid fa-box-archive';
 }
 
-function planExplanation(plan) {
-    if (plan.mode === 'ai') {
-        return t`This image is smaller than the recommended background size. Real-ESRGAN will reconstruct illustration details locally in small tiles, then fit the result to a maximum long edge of 4096 pixels.`;
-    }
-    if (plan.mode === 'downscale') {
-        return t`This image contains far more pixels than the screen needs. It will be resized to a 4096-pixel long edge without running AI.`;
-    }
-    return t`The dimensions are already suitable. The image will keep its size and be saved as a high-quality WebP copy.`;
-}
-
 async function processBackground(analysis, plan) {
     activeAbortController = new AbortController();
     let progressCanClose = false;
     let uploadedName = '';
+    let outputObjectUrl = '';
     const progress = buildProgressView(analysis.filename, plan);
     const progressPopup = new Popup(progress.root, POPUP_TYPE.DISPLAY, '', {
         large: false,
         allowEscapeClose: false,
         onClosing: () => progressCanClose || !activeAbortController,
     });
-    progress.cancel.addEventListener('click', () => activeAbortController?.abort());
+    progressPopup.dlg.classList.add('smart-backgrounds-progress-popup');
+    progress.cancel.addEventListener('click', () => {
+        if (!activeAbortController || activeAbortController.signal.aborted) return;
+        progress.cancel.disabled = true;
+        progress.cancel.querySelector('span').textContent = t`Cancelling…`;
+        activeAbortController.abort();
+    });
 
     const popupPromise = progressPopup.show();
     try {
@@ -353,13 +360,7 @@ async function processBackground(analysis, plan) {
             sourceImage = await upscaleLocally(
                 sourceImage,
                 activeAbortController.signal,
-                (value, backend) => updateProgress(
-                    progress,
-                    backend === 'webgpu'
-                        ? t`Restoring details with local AI (GPU)…`
-                        : t`Restoring details with local AI (CPU)…`,
-                    0.08 + value * 0.72,
-                ),
+                value => updateProgress(progress, t`Restoring details…`, 0.08 + value * 0.72),
             );
         }
 
@@ -373,9 +374,26 @@ async function processBackground(analysis, plan) {
         const outputBlob = await renderWebp(sourceImage, target, DEFAULT_SETTINGS.webpQuality);
 
         throwIfAborted(activeAbortController.signal);
-        updateProgress(progress, t`Adding the new background to SillyTavern…`, 0.93);
-        const replacementId = createReplacementId();
-        const outputName = makePendingOutputName(analysis.filename, plan.mode, replacementId);
+        outputObjectUrl = URL.createObjectURL(outputBlob);
+        progress.cancel.disabled = true;
+        updateProgress(progress, t`Processing finished. Review the result.`, 1);
+        const outputName = await showReplacementConfirmation(
+            analysis,
+            outputBlob,
+            outputObjectUrl,
+            target,
+            plan,
+        );
+
+        if (!outputName) {
+            toastr.info(t`The processed result was discarded. The original was not changed.`);
+            progressCanClose = true;
+            await progressPopup.complete(POPUP_RESULT.CANCELLED);
+            return;
+        }
+
+        throwIfAborted(activeAbortController.signal);
+        updateProgress(progress, t`Adding the new background to SillyTavern…`, 0.97);
         uploadedName = await uploadBackground(outputBlob, outputName);
 
         const selected = await refreshAndSelectUploadedBackground(uploadedName, analysis.filename);
@@ -410,6 +428,7 @@ async function processBackground(analysis, plan) {
         await progressPopup.complete(POPUP_RESULT.CANCELLED);
     } finally {
         URL.revokeObjectURL(analysis.objectUrl);
+        if (outputObjectUrl) URL.revokeObjectURL(outputObjectUrl);
         activeAbortController = null;
         await popupPromise;
     }
@@ -429,8 +448,8 @@ function buildProgressView(filename, plan) {
     `;
     const cancel = document.createElement('button');
     cancel.type = 'button';
-    cancel.className = 'menu_button';
-    cancel.innerHTML = `<i class="fa-solid fa-ban"></i><span>${escapeHtml(t`Cancel processing`)}</span>`;
+    cancel.className = 'menu_button smart-backgrounds-progress-cancel';
+    cancel.innerHTML = `<i class="fa-solid fa-ban"></i><span>${escapeHtml(t`Cancel background processing`)}</span>`;
     root.appendChild(cancel);
     return {
         root,
@@ -450,6 +469,173 @@ async function upscaleLocally(image, signal, onProgress) {
     const result = await restoreIllustration(image, signal, onProgress);
     console.info(`[${MODULE_ID}] Real-ESRGAN detail restoration completed.`);
     return result;
+}
+
+async function showReplacementConfirmation(analysis, outputBlob, outputUrl, target, plan) {
+    const filenameInputId = 'smart_backgrounds_output_filename';
+    const proposedName = makeUniqueWebpFilename(
+        makeOutputName(analysis.filename, plan.mode),
+        getGalleryBackgroundNames(),
+    );
+    const content = buildComparisonView(analysis, outputBlob, outputUrl, target);
+    let confirmedName = '';
+
+    const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
+        large: true,
+        allowVerticalScrolling: true,
+        okButton: t`Use the processed image`,
+        cancelButton: t`Keep the original`,
+        customInputs: [{
+            id: filenameInputId,
+            type: 'text',
+            label: t`New image name`,
+            defaultState: proposedName,
+            tooltip: t`The image will be saved as WebP. Characters unsupported by Windows will be replaced automatically.`,
+        }],
+        onClosing: async closingPopup => {
+            if (closingPopup.result !== POPUP_RESULT.AFFIRMATIVE) return true;
+
+            const input = closingPopup.dlg.querySelector(`#${filenameInputId}`);
+            const normalizedName = normalizeWebpFilename(
+                closingPopup.inputResults?.get(filenameInputId),
+            );
+            if (input instanceof HTMLInputElement) input.value = normalizedName;
+
+            if (!normalizedName) {
+                focusFilenameInput(input);
+                toastr.warning(t`Please enter a name for the new image.`);
+                return false;
+            }
+            if (normalizedName.toLocaleLowerCase() === analysis.filename.toLocaleLowerCase()) {
+                focusFilenameInput(input);
+                toastr.warning(t`The new image must use a different name from the original.`);
+                return false;
+            }
+            if (await backgroundFilenameExists(normalizedName)) {
+                focusFilenameInput(input);
+                toastr.warning(t`A background with this name already exists. Please choose another name.`);
+                return false;
+            }
+
+            confirmedName = normalizedName;
+            return true;
+        },
+    });
+    popup.dlg.classList.add('smart-backgrounds-comparison-popup');
+
+    const result = await popup.show();
+    return result === POPUP_RESULT.AFFIRMATIVE ? confirmedName : '';
+}
+
+function buildComparisonView(analysis, outputBlob, outputUrl, target) {
+    const content = document.createElement('div');
+    content.className = 'smart-backgrounds-comparison';
+
+    const title = document.createElement('h3');
+    title.textContent = t`Compare before replacing`;
+    const grid = document.createElement('div');
+    grid.className = 'smart-backgrounds-comparison-grid';
+    grid.append(
+        buildComparisonCard(
+            t`Original`,
+            analysis.objectUrl,
+            analysis.filename,
+            `${analysis.width} × ${analysis.height} · ${formatBytes(analysis.bytes)}`,
+        ),
+        buildComparisonCard(
+            t`Processed`,
+            outputUrl,
+            t`Processed preview`,
+            `${target.width} × ${target.height} · ${formatBytes(outputBlob.size)}`,
+        ),
+    );
+
+    content.append(title, grid);
+    return content;
+}
+
+function buildComparisonCard(label, src, imageTitle, metadata) {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'smart-backgrounds-comparison-card';
+    card.title = t`Click to enlarge`;
+    card.setAttribute('aria-label', `${label}: ${t`Click to enlarge`}`);
+
+    const heading = document.createElement('strong');
+    heading.textContent = label;
+    const frame = document.createElement('span');
+    frame.className = 'smart-backgrounds-comparison-image';
+    const image = document.createElement('img');
+    image.src = src;
+    image.alt = imageTitle;
+    const zoom = document.createElement('i');
+    zoom.className = 'fa-solid fa-magnifying-glass-plus';
+    zoom.setAttribute('aria-hidden', 'true');
+    frame.append(image, zoom);
+    const details = document.createElement('span');
+    details.className = 'smart-backgrounds-comparison-meta';
+    details.textContent = metadata;
+
+    card.append(heading, frame, details);
+    card.addEventListener('click', () => showImagePreview(src, imageTitle));
+    return card;
+}
+
+function showImagePreview(src, title) {
+    const image = document.createElement('img');
+    image.src = src;
+    image.alt = title;
+    image.className = 'img_enlarged';
+    const holder = document.createElement('div');
+    holder.className = 'img_enlarged_holder';
+    holder.append(image);
+    const container = document.createElement('div');
+    container.className = 'img_enlarged_container';
+    container.append(holder);
+
+    image.addEventListener('click', event => {
+        image.classList.toggle('zoomed', !image.classList.contains('zoomed'));
+        event.stopPropagation();
+    });
+
+    const popup = new Popup(container, POPUP_TYPE.DISPLAY, '', {
+        large: true,
+        transparent: true,
+    });
+    popup.dlg.style.width = 'unset';
+    popup.dlg.style.height = 'unset';
+    popup.dlg.addEventListener('click', () => void popup.completeCancelled());
+    void popup.show();
+}
+
+function getGalleryBackgroundNames() {
+    return Array.from(
+        document.querySelectorAll('#bg_menu_content .bg_example[bgfile]'),
+        tile => tile.getAttribute('bgfile'),
+    ).filter(Boolean);
+}
+
+async function backgroundFilenameExists(filename) {
+    const wanted = filename.toLocaleLowerCase();
+    if (getGalleryBackgroundNames().some(name => name.toLocaleLowerCase() === wanted)) {
+        return true;
+    }
+
+    try {
+        const response = await fetch(`/backgrounds/${encodeURIComponent(filename)}`, {
+            method: 'HEAD',
+            cache: 'no-store',
+        });
+        return response.ok;
+    } catch {
+        return false;
+    }
+}
+
+function focusFilenameInput(input) {
+    if (!(input instanceof HTMLInputElement)) return;
+    input.focus();
+    input.select();
 }
 
 async function renderWebp(image, dimensions, quality) {
@@ -484,7 +670,9 @@ async function uploadBackground(blob, filename) {
     if (!response.ok) {
         throw new Error(`Upload failed: HTTP ${response.status}`);
     }
-    return await response.text();
+    const uploadedName = await response.text();
+    deletedBackgroundsThisSession.delete(uploadedName);
+    return uploadedName;
 }
 
 async function deleteBackgroundFile(filename) {
@@ -591,13 +779,6 @@ function observeBackgroundDrawer() {
         }
     });
     drawerObserver.observe(drawer, { attributes: true, attributeFilter: ['class'] });
-}
-
-function createReplacementId() {
-    if (typeof globalThis.crypto?.randomUUID === 'function') {
-        return globalThis.crypto.randomUUID().slice(0, 8);
-    }
-    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
 function selectUploadedBackground(filename) {
