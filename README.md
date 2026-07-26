@@ -7,7 +7,7 @@ It solves two opposite problems:
 - Small but beautiful illustrations can have blurred edges and missing-looking details reconstructed locally with Real-ESRGAN.
 - Extremely large images can be resized to a screen-appropriate 4K-class copy so switching backgrounds uses much less memory.
 
-The original image is never overwritten. Every result is added as a separate WebP background.
+The processed result replaces the original in the gallery without destroying it immediately. An **Undo** bar remains visible while the Backgrounds drawer is open. Closing the drawer confirms the result, deletes the old file, and keeps the optimized WebP.
 
 ## Features
 
@@ -18,7 +18,9 @@ The original image is never overwritten. Every result is added as a separate Web
 - Overlapping tile-based processing, visible progress, and cancellation so memory use stays bounded.
 - 4096-pixel maximum long edge and high-quality WebP output.
 - Simplified Chinese, Traditional Chinese, and English interface.
-- Original backgrounds remain untouched.
+- Transactional replacement: the original stays recoverable until the Backgrounds drawer is closed.
+- One-click Undo deletes the unsatisfactory result and restores the original.
+- Unique temporary output names prevent a new run from overwriting an earlier result.
 
 ## Install
 
@@ -38,11 +40,15 @@ In SillyTavern:
 2. Click the sparkle-wand action on a background, or select a background and click **Smart Optimize** at the top.
 3. Review the detected plan.
 4. Click **Start processing**.
-5. The optimized copy is added to the background library and selected automatically.
+5. The optimized result replaces the original in the gallery and is selected automatically.
+6. If the result is not good, click **Undo** before closing the Backgrounds drawer. The new file is deleted and the original is restored.
+7. If the result is good, close the Backgrounds drawer. That confirms the replacement and deletes the old file.
 
 AI restoration is a one-time process. Later background switches load the generated WebP directly.
 
-The bundled model is tuned for anime, illustration, and graphic-art backgrounds. It can reconstruct clean contours and small drawn details that ordinary resizing cannot create. Like every restoration model, it estimates missing detail rather than recovering a mathematically exact original, and it may over-sharpen photographs. The untouched source is always kept so the result is easy to compare or discard.
+The bundled model is tuned for anime, illustration, and graphic-art backgrounds. It can reconstruct clean contours and small drawn details that ordinary resizing cannot create. Like every restoration model, it estimates missing detail rather than recovering a mathematically exact original, and it may over-sharpen photographs. The source remains temporarily recoverable while the Backgrounds drawer stays open, so a poor result can be undone safely.
+
+If processing is cancelled or fails, the original is not changed. If SillyTavern is reloaded before the drawer is closed, the extension chooses safety: it does not delete the original automatically.
 
 ## Privacy
 

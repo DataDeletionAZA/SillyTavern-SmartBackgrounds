@@ -9,14 +9,20 @@ import {
     decodedMemoryMiB,
     fitWithinLongEdge,
     formatBytes,
-    makeOutputName,
+    makePendingOutputName,
+    shouldCommitReplacement,
 } from './core.js';
 import { restoreIllustration } from './realesrgan.js';
 
 const MODULE_ID = 'smart-backgrounds';
 const ACTION = 'smart-background-optimize';
 let galleryObserver = null;
+let drawerObserver = null;
 let activeAbortController = null;
+let pendingReplacement = null;
+let replacementActionBusy = false;
+let backgroundDrawerWasOpen = false;
+const deletedBackgroundsThisSession = new Set();
 let initialized = false;
 
 function addHeaderButton() {
@@ -40,6 +46,74 @@ function addHeaderButton() {
     uploadButton.insertAdjacentElement('beforebegin', button);
 }
 
+function addPendingReplacementBanner() {
+    if (document.getElementById('smart_backgrounds_pending')) return;
+    const header = document.getElementById('bg-header-fixed');
+    if (!header) {
+        console.warn(`[${MODULE_ID}] Background header was not found; the undo banner could not be added.`);
+        return;
+    }
+
+    const banner = document.createElement('div');
+    banner.id = 'smart_backgrounds_pending';
+    banner.className = 'smart-backgrounds-pending';
+    banner.hidden = true;
+    banner.innerHTML = `
+        <i class="fa-solid fa-clock-rotate-left smart-backgrounds-pending-icon" aria-hidden="true"></i>
+        <div class="smart-backgrounds-pending-copy">
+            <strong>${escapeHtml(t`Replacement ready`)}</strong>
+            <span>${escapeHtml(t`The new background is active. The original will be deleted only after you close Backgrounds.`)}</span>
+        </div>
+    `;
+
+    const undo = document.createElement('button');
+    undo.id = 'smart_backgrounds_undo';
+    undo.type = 'button';
+    undo.className = 'menu_button menu_button_icon smart-backgrounds-undo';
+    undo.title = t`Undo and restore the original`;
+    undo.innerHTML = `
+        <i class="fa-solid fa-rotate-left"></i>
+        <span>${escapeHtml(t`Undo`)}</span>
+    `;
+    undo.addEventListener('click', () => void undoPendingReplacement());
+    banner.appendChild(undo);
+    header.insertAdjacentElement('afterend', banner);
+}
+
+function updatePendingReplacementUi() {
+    const banner = document.getElementById('smart_backgrounds_pending');
+    const undo = document.getElementById('smart_backgrounds_undo');
+    if (banner) {
+        banner.hidden = !pendingReplacement;
+        banner.title = pendingReplacement
+            ? `${pendingReplacement.originalFilename} → ${pendingReplacement.outputFilename}`
+            : '';
+    }
+    if (undo instanceof HTMLButtonElement) {
+        undo.disabled = replacementActionBusy;
+    }
+    applyPendingGalleryState();
+}
+
+function applyPendingGalleryState() {
+    const tiles = document.querySelectorAll('#bg_menu_content .bg_example[bgfile]');
+    for (const tile of tiles) {
+        const filename = tile.getAttribute('bgfile');
+        if (filename && deletedBackgroundsThisSession.has(filename)) {
+            tile.remove();
+            continue;
+        }
+        tile.classList.toggle(
+            'smart-backgrounds-pending-original',
+            Boolean(pendingReplacement && filename === pendingReplacement.originalFilename),
+        );
+        tile.classList.toggle(
+            'smart-backgrounds-pending-output',
+            Boolean(pendingReplacement && filename === pendingReplacement.outputFilename),
+        );
+    }
+}
+
 function decorateBackgroundTiles(root = document) {
     const tiles = root.querySelectorAll?.('#bg_menu_content .bg_example:not([custom="true"])') || [];
     for (const tile of tiles) {
@@ -53,6 +127,7 @@ function decorateBackgroundTiles(root = document) {
         action.setAttribute('aria-label', t`Smart optimize this background`);
         menu.insertBefore(action, menu.firstChild);
     }
+    applyPendingGalleryState();
 }
 
 function observeGallery() {
@@ -114,6 +189,10 @@ function onDocumentClick(event) {
 async function openOptimizer(filename) {
     if (activeAbortController) {
         toastr.warning(t`Another background is currently being processed.`);
+        return;
+    }
+    if (pendingReplacement) {
+        toastr.warning(t`Please undo the current replacement or close Backgrounds to confirm it before processing another image.`);
         return;
     }
 
@@ -215,7 +294,7 @@ function buildAnalysisView(analysis, plan) {
     safety.className = 'smart-backgrounds-safety';
     safety.innerHTML = `
         <i class="fa-solid fa-shield-heart"></i>
-        <span>${escapeHtml(t`The original file will be kept. A new optimized copy will be added to your background library.`)}</span>
+        <span>${escapeHtml(t`The new result will replace this background in the gallery. The original stays recoverable until you close Backgrounds, and Undo restores it.`)}</span>
     `;
 
     details.append(title, badge, info, explanation, safety);
@@ -256,6 +335,7 @@ function planExplanation(plan) {
 async function processBackground(analysis, plan) {
     activeAbortController = new AbortController();
     let progressCanClose = false;
+    let uploadedName = '';
     const progress = buildProgressView(analysis.filename, plan);
     const progressPopup = new Popup(progress.root, POPUP_TYPE.DISPLAY, '', {
         large: false,
@@ -294,15 +374,32 @@ async function processBackground(analysis, plan) {
 
         throwIfAborted(activeAbortController.signal);
         updateProgress(progress, t`Adding the new background to SillyTavern…`, 0.93);
-        const outputName = makeOutputName(analysis.filename, plan.mode);
-        const uploadedName = await uploadBackground(outputBlob, outputName);
+        const replacementId = createReplacementId();
+        const outputName = makePendingOutputName(analysis.filename, plan.mode, replacementId);
+        uploadedName = await uploadBackground(outputBlob, outputName);
 
-        await refreshAndSelectUploadedBackground(uploadedName, analysis.filename);
+        const selected = await refreshAndSelectUploadedBackground(uploadedName, analysis.filename);
+        if (!selected) {
+            throw new Error('The uploaded background could not be selected.');
+        }
+
+        pendingReplacement = {
+            originalFilename: analysis.filename,
+            outputFilename: uploadedName,
+        };
+        updatePendingReplacementUi();
         updateProgress(progress, t`Finished`, 1);
-        toastr.success(t`Optimized background created: ${uploadedName}`);
+        toastr.success(t`The new background is active. Use Undo to restore the original, or close Backgrounds to confirm.`);
         progressCanClose = true;
         await progressPopup.complete(POPUP_RESULT.AFFIRMATIVE);
     } catch (error) {
+        if (uploadedName && pendingReplacement?.outputFilename !== uploadedName) {
+            try {
+                await deleteBackgroundFile(uploadedName);
+            } catch (cleanupError) {
+                console.warn(`[${MODULE_ID}] Failed to clean up an incomplete upload.`, cleanupError);
+            }
+        }
         if (error?.name === 'AbortError') {
             toastr.info(t`Background processing was cancelled.`);
         } else {
@@ -390,6 +487,119 @@ async function uploadBackground(blob, filename) {
     return await response.text();
 }
 
+async function deleteBackgroundFile(filename) {
+    const response = await fetch('/api/backgrounds/delete', {
+        method: 'POST',
+        headers: getRequestHeaders(),
+        body: JSON.stringify({ bg: filename }),
+        cache: 'no-cache',
+    });
+    if (!response.ok) {
+        throw new Error(`Delete failed: HTTP ${response.status}`);
+    }
+    deletedBackgroundsThisSession.add(filename);
+    applyPendingGalleryState();
+}
+
+async function undoPendingReplacement() {
+    if (!pendingReplacement || replacementActionBusy) return;
+
+    const replacement = pendingReplacement;
+    replacementActionBusy = true;
+    updatePendingReplacementUi();
+    let outputDeleted = false;
+
+    try {
+        await deleteBackgroundFile(replacement.outputFilename);
+        outputDeleted = true;
+        pendingReplacement = null;
+        updatePendingReplacementUi();
+
+        // The original tile is immediately visible again. Select it before the
+        // full gallery refresh so Undo feels instant even on a large library.
+        selectUploadedBackground(replacement.originalFilename);
+        await getBackgrounds();
+        if (!selectUploadedBackground(replacement.originalFilename)) {
+            throw new Error('The restored background could not be selected.');
+        }
+        toastr.success(t`Replacement undone. The original background was restored.`);
+    } catch (error) {
+        console.error(`[${MODULE_ID}] Failed to undo replacement.`, error);
+        if (outputDeleted) {
+            pendingReplacement = null;
+            updatePendingReplacementUi();
+            toastr.warning(t`The new file was removed and the original is safe, but it could not be selected automatically.`);
+        } else {
+            pendingReplacement = replacement;
+            updatePendingReplacementUi();
+            toastr.error(t`Undo failed. The original background is still safely kept.`);
+        }
+    } finally {
+        replacementActionBusy = false;
+        updatePendingReplacementUi();
+    }
+}
+
+async function commitPendingReplacement() {
+    if (!pendingReplacement || replacementActionBusy) return;
+
+    const replacement = pendingReplacement;
+    replacementActionBusy = true;
+    updatePendingReplacementUi();
+    let originalDeleted = false;
+
+    try {
+        await deleteBackgroundFile(replacement.originalFilename);
+        originalDeleted = true;
+        pendingReplacement = null;
+        updatePendingReplacementUi();
+        await getBackgrounds();
+        insertTemporaryGalleryTile(replacement.outputFilename, replacement.originalFilename);
+        selectUploadedBackground(replacement.outputFilename);
+        toastr.success(t`Replacement confirmed. The original background was deleted.`);
+    } catch (error) {
+        console.error(`[${MODULE_ID}] Failed to confirm replacement.`, error);
+        if (originalDeleted) {
+            pendingReplacement = null;
+            toastr.warning(t`The replacement was confirmed, but the background list could not refresh automatically.`);
+        } else {
+            pendingReplacement = replacement;
+            toastr.error(t`The original could not be deleted, so it is still safely kept. Reopen Backgrounds to try again or undo.`);
+        }
+    } finally {
+        replacementActionBusy = false;
+        updatePendingReplacementUi();
+    }
+}
+
+function observeBackgroundDrawer() {
+    const drawer = document.getElementById('Backgrounds');
+    if (!drawer || drawerObserver) return;
+
+    backgroundDrawerWasOpen = drawer.classList.contains('openDrawer');
+    drawerObserver = new MutationObserver(() => {
+        const isOpen = drawer.classList.contains('openDrawer');
+        const shouldCommit = shouldCommitReplacement(
+            backgroundDrawerWasOpen,
+            isOpen,
+            Boolean(pendingReplacement),
+            replacementActionBusy,
+        );
+        backgroundDrawerWasOpen = isOpen;
+        if (shouldCommit) {
+            void commitPendingReplacement();
+        }
+    });
+    drawerObserver.observe(drawer, { attributes: true, attributeFilter: ['class'] });
+}
+
+function createReplacementId() {
+    if (typeof globalThis.crypto?.randomUUID === 'function') {
+        return globalThis.crypto.randomUUID().slice(0, 8);
+    }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
 function selectUploadedBackground(filename) {
     const tiles = document.querySelectorAll('#bg_menu_content .bg_example[bgfile]');
     const tile = Array.from(tiles).find((element) => element.getAttribute('bgfile') === filename);
@@ -441,7 +651,13 @@ function insertTemporaryGalleryTile(filename, sourceFilename) {
     }
 
     const tile = source.cloneNode(true);
-    tile.classList.remove('selected-background', 'locked-background', 'mobile-menu-open');
+    tile.classList.remove(
+        'selected-background',
+        'locked-background',
+        'mobile-menu-open',
+        'smart-backgrounds-pending-original',
+        'smart-backgrounds-pending-output',
+    );
     tile.setAttribute('bgfile', filename);
     tile.setAttribute('title', filename);
     tile.setAttribute('custom', 'false');
@@ -491,7 +707,9 @@ export async function init() {
     initialized = true;
 
     addHeaderButton();
+    addPendingReplacementBanner();
     observeGallery();
+    observeBackgroundDrawer();
     document.addEventListener('click', onDocumentClick, true);
     console.info(`[${MODULE_ID}] Smart Backgrounds initialized for SillyTavern 1.18.0+.`);
 }

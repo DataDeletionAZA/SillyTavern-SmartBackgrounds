@@ -8,6 +8,8 @@ import {
     classifyImage,
     fitWithinLongEdge,
     makeOutputName,
+    makePendingOutputName,
+    shouldCommitReplacement,
 } from '../src/core.js';
 
 test('classifies small images for AI enhancement', () => {
@@ -62,4 +64,23 @@ test('creates overlapping tiles that cover the full image exactly once', () => {
 test('creates stable WebP output names', () => {
     assert.equal(makeOutputName('pretty room.jpg', 'ai'), 'pretty room-smart-ai.webp');
     assert.equal(makeOutputName('pretty room-smart-ai.webp', 'downscale'), 'pretty room-smart-optimized.webp');
+});
+
+test('creates conflict-safe names for reversible replacements', () => {
+    assert.equal(
+        makePendingOutputName('pretty room.jpg', 'ai', 'A1B2-C3D4'),
+        'pretty room-smart-ai-a1b2-c3d4.webp',
+    );
+    assert.equal(
+        makePendingOutputName('pretty room-smart-ai-oldresult.webp', 'downscale', 'next'),
+        'pretty room-smart-optimized-next.webp',
+    );
+});
+
+test('commits only when the open Backgrounds drawer is closed', () => {
+    assert.equal(shouldCommitReplacement(true, false, true), true);
+    assert.equal(shouldCommitReplacement(false, false, true), false);
+    assert.equal(shouldCommitReplacement(true, true, true), false);
+    assert.equal(shouldCommitReplacement(true, false, false), false);
+    assert.equal(shouldCommitReplacement(true, false, true, true), false);
 });

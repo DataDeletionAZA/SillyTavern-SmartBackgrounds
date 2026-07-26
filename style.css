@@ -2,6 +2,55 @@
     white-space: nowrap;
 }
 
+.smart-backgrounds-pending {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    margin: 8px 10px 4px;
+    padding: 9px 10px;
+    border: 1px solid color-mix(in srgb, var(--SmartThemeEmColor) 58%, var(--SmartThemeBorderColor));
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--SmartThemeEmColor) 12%, var(--SmartThemeBlurTintColor));
+    box-shadow: 0 3px 12px var(--black30a);
+}
+
+.smart-backgrounds-pending[hidden] {
+    display: none;
+}
+
+.smart-backgrounds-pending-icon {
+    color: var(--SmartThemeEmColor);
+    font-size: 1.15rem;
+}
+
+.smart-backgrounds-pending-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.smart-backgrounds-pending-copy span {
+    font-size: 0.9em;
+    line-height: 1.35;
+    opacity: 0.82;
+}
+
+.smart-backgrounds-undo {
+    white-space: nowrap;
+    border-color: var(--SmartThemeEmColor);
+}
+
+.smart-backgrounds-pending-original {
+    display: none !important;
+}
+
+.smart-backgrounds-pending-output {
+    outline: 2px solid color-mix(in srgb, var(--SmartThemeEmColor) 72%, transparent);
+    outline-offset: -2px;
+}
+
 .smart-backgrounds-action {
     color: var(--SmartThemeEmColor);
 }
@@ -154,6 +203,16 @@
 }
 
 @media (max-width: 700px) {
+    .smart-backgrounds-pending {
+        grid-template-columns: auto minmax(0, 1fr);
+    }
+
+    .smart-backgrounds-undo {
+        grid-column: 1 / -1;
+        width: 100%;
+        justify-content: center;
+    }
+
     .smart-backgrounds-dialog {
         grid-template-columns: 1fr;
     }

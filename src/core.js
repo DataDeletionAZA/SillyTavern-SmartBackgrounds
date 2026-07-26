@@ -107,7 +107,7 @@ export function fitWithinLongEdge(width, height, targetLongEdge) {
 }
 
 /**
- * Make a stable output name so reprocessing replaces the previous optimized copy.
+ * Make a readable base name for an optimized background.
  *
  * @param {string} filename
  * @param {'ai'|'downscale'|'compress'} mode
@@ -115,9 +115,34 @@ export function fitWithinLongEdge(width, height, targetLongEdge) {
 export function makeOutputName(filename, mode) {
     const base = String(filename)
         .replace(/\.[^/.]+$/, '')
-        .replace(/-smart-(ai|optimized)$/i, '');
+        .replace(/-smart-(ai|optimized)(-[a-z0-9_-]+)?$/i, '');
     const suffix = mode === 'ai' ? 'smart-ai' : 'smart-optimized';
     return `${base}-${suffix}.webp`;
+}
+
+/**
+ * Give every reversible replacement its own filename. This prevents a new run
+ * from overwriting an older optimized image before the user has accepted it.
+ *
+ * @param {string} filename
+ * @param {'ai'|'downscale'|'compress'} mode
+ * @param {string} transactionId
+ */
+export function makePendingOutputName(filename, mode, transactionId) {
+    const readableName = makeOutputName(filename, mode).replace(/\.webp$/i, '');
+    const safeId = String(transactionId)
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]/g, '')
+        .slice(0, 16) || 'pending';
+    return `${readableName}-${safeId}.webp`;
+}
+
+/**
+ * A replacement is accepted only when an open Backgrounds drawer transitions
+ * to closed while no replacement action is already running.
+ */
+export function shouldCommitReplacement(wasOpen, isOpen, hasPending, isBusy = false) {
+    return Boolean(wasOpen && !isOpen && hasPending && !isBusy);
 }
 
 export function decodedMemoryMiB(width, height) {
