@@ -53,6 +53,40 @@ export function chooseAiScale(longEdge, targetEdge) {
 }
 
 /**
+ * Split an image into overlapping tiles so restoration stays within a
+ * predictable memory budget and the kept tile centers do not show seams.
+ */
+export function buildTilePlan(width, height, tileSize = 128, overlap = 16) {
+    const tiles = [];
+
+    for (let y = 0; y < height; y += tileSize) {
+        for (let x = 0; x < width; x += tileSize) {
+            const coreWidth = Math.min(tileSize, width - x);
+            const coreHeight = Math.min(tileSize, height - y);
+            const sourceX = Math.max(0, x - overlap);
+            const sourceY = Math.max(0, y - overlap);
+            const sourceRight = Math.min(width, x + coreWidth + overlap);
+            const sourceBottom = Math.min(height, y + coreHeight + overlap);
+
+            tiles.push({
+                x,
+                y,
+                coreWidth,
+                coreHeight,
+                sourceX,
+                sourceY,
+                sourceWidth: sourceRight - sourceX,
+                sourceHeight: sourceBottom - sourceY,
+                cropX: x - sourceX,
+                cropY: y - sourceY,
+            });
+        }
+    }
+
+    return tiles;
+}
+
+/**
  * Preserve aspect ratio while targeting a maximum long edge.
  *
  * @param {number} width

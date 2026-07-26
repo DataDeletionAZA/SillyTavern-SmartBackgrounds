@@ -1,9 +1,3 @@
-import * as tf from '@tensorflow/tfjs';
-import Upscaler from 'upscaler';
-import x2Model from '@upscalerjs/esrgan-slim/2x';
-import x3Model from '@upscalerjs/esrgan-slim/3x';
-import x4Model from '@upscalerjs/esrgan-slim/4x';
-
 import { getRequestHeaders, getThumbnailUrl } from '/script.js';
 import { getBackgroundPath, getBackgrounds } from '/scripts/backgrounds.js';
 import { t } from '/scripts/i18n.js';
@@ -17,18 +11,13 @@ import {
     formatBytes,
     makeOutputName,
 } from './core.js';
+import { restoreIllustration } from './realesrgan.js';
 
 const MODULE_ID = 'smart-backgrounds';
 const ACTION = 'smart-background-optimize';
-const MODEL_DEFINITIONS = { 2: x2Model, 3: x3Model, 4: x4Model };
-const MODEL_PATCHES = { 2: 128, 3: 96, 4: 64 };
 let galleryObserver = null;
 let activeAbortController = null;
 let initialized = false;
-
-function modelPath(scale) {
-    return new URL(`../models/x${scale}/model.json`, import.meta.url).href;
-}
 
 function addHeaderButton() {
     if (document.getElementById('smart_backgrounds_open')) return;
@@ -243,7 +232,7 @@ function appendInfo(list, label, value) {
 }
 
 function planTitle(plan) {
-    if (plan.mode === 'ai') return t`Local AI enhancement ×${plan.scale}`;
+    if (plan.mode === 'ai') return t`Local AI detail restoration ×4`;
     if (plan.mode === 'downscale') return t`High-resolution performance optimization`;
     return t`Loss-conscious compression`;
 }
@@ -256,7 +245,7 @@ function planIcon(mode) {
 
 function planExplanation(plan) {
     if (plan.mode === 'ai') {
-        return t`This image is smaller than the recommended background size. A compact ESRGAN model will enhance it locally in small tiles, then fit it to a maximum long edge of 4096 pixels.`;
+        return t`This image is smaller than the recommended background size. Real-ESRGAN will reconstruct illustration details locally in small tiles, then fit the result to a maximum long edge of 4096 pixels.`;
     }
     if (plan.mode === 'downscale') {
         return t`This image contains far more pixels than the screen needs. It will be resized to a 4096-pixel long edge without running AI.`;
@@ -278,24 +267,27 @@ async function processBackground(analysis, plan) {
     const popupPromise = progressPopup.show();
     try {
         updateProgress(progress, t`Preparing image…`, 0.03);
-        let sourceUrl = analysis.objectUrl;
-        let sourceImage = null;
+        let sourceImage = await loadImage(analysis.objectUrl);
 
         if (plan.mode === 'ai') {
-            sourceUrl = await upscaleLocally(
-                analysis.objectUrl,
-                plan.scale,
+            sourceImage = await upscaleLocally(
+                sourceImage,
                 activeAbortController.signal,
-                (value) => updateProgress(progress, t`Enhancing with local AI…`, 0.08 + value * 0.72),
+                (value, backend) => updateProgress(
+                    progress,
+                    backend === 'webgpu'
+                        ? t`Restoring details with local AI (GPU)…`
+                        : t`Restoring details with local AI (CPU)…`,
+                    0.08 + value * 0.72,
+                ),
             );
         }
 
         throwIfAborted(activeAbortController.signal);
         updateProgress(progress, t`Creating the optimized background…`, 0.84);
-        sourceImage = await loadImage(sourceUrl);
         const target = fitWithinLongEdge(
-            sourceImage.naturalWidth,
-            sourceImage.naturalHeight,
+            sourceImage.naturalWidth || sourceImage.width,
+            sourceImage.naturalHeight || sourceImage.height,
             plan.targetLongEdge,
         );
         const outputBlob = await renderWebp(sourceImage, target, DEFAULT_SETTINGS.webpQuality);
@@ -357,43 +349,10 @@ function updateProgress(progress, label, value) {
     progress.label.textContent = `${label} ${percentage}%`;
 }
 
-async function upscaleLocally(imageUrl, scale, signal, onProgress) {
-    const backend = await selectTensorflowBackend();
-    console.info(`[${MODULE_ID}] Local AI backend: ${backend}; scale: ${scale}x`);
-
-    const baseModel = MODEL_DEFINITIONS[scale];
-    const model = {
-        ...baseModel,
-        path: modelPath(scale),
-    };
-    const upscaler = new Upscaler({ model });
-    const patchSize = MODEL_PATCHES[scale];
-
-    try {
-        await upscaler.warmup({ patchSize, padding: 4 }, { signal });
-        return await upscaler.upscale(imageUrl, {
-            output: 'base64',
-            patchSize,
-            padding: 4,
-            signal,
-            awaitNextFrame: true,
-            progress: (percent) => onProgress(percent),
-        });
-    } finally {
-        await upscaler.dispose();
-    }
-}
-
-async function selectTensorflowBackend() {
-    if (tf.findBackend('webgl')) {
-        await tf.setBackend('webgl');
-        await tf.ready();
-        return 'webgl';
-    }
-
-    await tf.setBackend('cpu');
-    await tf.ready();
-    return 'cpu';
+async function upscaleLocally(image, signal, onProgress) {
+    const result = await restoreIllustration(image, signal, onProgress);
+    console.info(`[${MODULE_ID}] Real-ESRGAN detail restoration completed.`);
+    return result;
 }
 
 async function renderWebp(image, dimensions, quality) {

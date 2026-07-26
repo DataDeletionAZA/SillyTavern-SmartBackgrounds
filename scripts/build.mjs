@@ -6,11 +6,12 @@ import { build } from 'esbuild';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const dist = path.join(root, 'dist');
 const models = path.join(root, 'models');
+const runtime = path.join(root, 'runtime');
 const bundlePath = path.join(dist, 'index.js');
 
 await fs.rm(dist, { recursive: true, force: true });
 await fs.mkdir(dist, { recursive: true });
-await fs.rm(models, { recursive: true, force: true });
+await fs.rm(runtime, { recursive: true, force: true });
 
 await build({
     entryPoints: [path.join(root, 'src/index.js')],
@@ -30,10 +31,17 @@ const bundle = await fs.readFile(bundlePath, 'utf8');
 const normalizedBundle = bundle.replace(/[ \t]+$/gm, '').replace(/\n+$/u, '\n');
 await fs.writeFile(bundlePath, normalizedBundle);
 
-for (const scale of [2, 3, 4]) {
-    const source = path.join(root, 'node_modules', '@upscalerjs', 'esrgan-slim', 'models', `x${scale}`);
-    const destination = path.join(models, `x${scale}`);
-    await fs.cp(source, destination, { recursive: true });
+await fs.mkdir(models, { recursive: true });
+await fs.access(path.join(models, 'RealESRGAN_x4plus_anime_6B.onnx'));
+await fs.mkdir(runtime, { recursive: true });
+for (const filename of [
+    'ort-wasm-simd-threaded.asyncify.mjs',
+    'ort-wasm-simd-threaded.asyncify.wasm',
+]) {
+    await fs.copyFile(
+        path.join(root, 'node_modules', 'onnxruntime-web', 'dist', filename),
+        path.join(runtime, filename),
+    );
 }
 
 console.log('Smart Backgrounds build complete.');
