@@ -20,6 +20,10 @@ test('classifies small images for AI enhancement', () => {
     assert.equal(plan.scale, 4);
 });
 
+test('uses conservative restoration strength by default', () => {
+    assert.equal(DEFAULT_SETTINGS.aiStrength, 0.4);
+});
+
 test('plans a 2x final output for images already near 2K', () => {
     assert.equal(chooseAiScale(2048, 4096), 2);
 });

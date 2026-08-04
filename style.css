@@ -1,10 +1,11 @@
-#smart_backgrounds_open {
+#smart_backgrounds_open,
+#smart_backgrounds_batch {
     white-space: nowrap;
 }
 
 .smart-backgrounds-pending {
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
     gap: 10px;
     margin: 8px 10px 4px;
@@ -37,11 +38,6 @@
     opacity: 0.82;
 }
 
-.smart-backgrounds-undo {
-    white-space: nowrap;
-    border-color: var(--SmartThemeEmColor);
-}
-
 .smart-backgrounds-pending-original {
     display: none !important;
 }
@@ -53,6 +49,15 @@
 
 .smart-backgrounds-action {
     color: var(--SmartThemeEmColor);
+}
+
+.smart-backgrounds-undo-action {
+    color: var(--warning);
+}
+
+.smart-backgrounds-undo-action[aria-disabled="true"] {
+    opacity: 0.45;
+    pointer-events: none;
 }
 
 .smart-backgrounds-dialog {
@@ -137,6 +142,27 @@
 .smart-backgrounds-info dd {
     margin: 0;
     overflow-wrap: anywhere;
+}
+
+.smart-backgrounds-strength {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 7px 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 7px;
+    background: var(--SmartThemeBlurTintColor);
+}
+
+.smart-backgrounds-strength output {
+    font-variant-numeric: tabular-nums;
+    color: var(--SmartThemeEmColor);
+}
+
+.smart-backgrounds-strength input {
+    grid-column: 1 / -1;
+    width: 100%;
 }
 
 .smart-backgrounds-safety {
@@ -317,15 +343,94 @@
     width: 100%;
 }
 
+.smart-backgrounds-batch {
+    display: flex;
+    width: 100%;
+    flex-direction: column;
+    gap: 12px;
+    text-align: left;
+}
+
+.smart-backgrounds-batch h3,
+.smart-backgrounds-batch p {
+    margin: 0;
+}
+
+.smart-backgrounds-batch-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.smart-backgrounds-batch-toolbar .menu_button {
+    display: inline-flex !important;
+    width: auto !important;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 12px;
+    white-space: nowrap;
+    writing-mode: horizontal-tb;
+}
+
+.smart-backgrounds-batch-toolbar span {
+    margin-left: auto;
+    opacity: 0.8;
+}
+
+.smart-backgrounds-batch-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: 9px;
+    max-height: 50vh;
+    padding: 2px;
+    overflow-y: auto;
+}
+
+.smart-backgrounds-batch-item {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+    padding: 7px;
+    cursor: pointer;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    background: var(--SmartThemeBlurTintColor);
+}
+
+.smart-backgrounds-batch-item:has(input:checked) {
+    border-color: var(--SmartThemeEmColor);
+    box-shadow: 0 0 0 1px var(--SmartThemeEmColor);
+}
+
+.smart-backgrounds-batch-item input {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1;
+}
+
+.smart-backgrounds-batch-item img {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    border-radius: 5px;
+    object-fit: cover;
+    background: var(--black30a);
+}
+
+.smart-backgrounds-batch-item span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.88em;
+}
+
 @media (max-width: 700px) {
     .smart-backgrounds-pending {
         grid-template-columns: auto minmax(0, 1fr);
-    }
-
-    .smart-backgrounds-undo {
-        grid-column: 1 / -1;
-        width: 100%;
-        justify-content: center;
     }
 
     .smart-backgrounds-dialog {

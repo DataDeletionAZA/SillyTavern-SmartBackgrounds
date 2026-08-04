@@ -6,7 +6,7 @@
     "js": "dist/index.js",
     "css": "style.css",
     "author": "Aza",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "homePage": "https://github.com/DataDeletionAZA/SillyTavern-SmartBackgrounds",
     "auto_update": true,
     "minimum_client_version": "1.18.0",

@@ -7,21 +7,23 @@ It solves two opposite problems:
 - Small but beautiful illustrations can have blurred edges and missing-looking details reconstructed locally with Real-ESRGAN.
 - Extremely large images can be resized to a screen-appropriate 4K-class copy so switching backgrounds uses much less memory.
 
-After processing, a side-by-side window lets you compare the original and processed images, enlarge either image, and rename the result. The result replaces the original only after confirmation. An **Undo** bar then remains visible while the Backgrounds drawer is open. Closing the drawer confirms the result, deletes the old file, and keeps the optimized WebP.
+After processing, a side-by-side window lets you compare the original and processed images, enlarge either image, and rename the result. Each accepted result gets its own **Undo** action while the Backgrounds drawer remains open. You can process more images immediately; closing the drawer confirms all remaining results and deletes their originals.
 
 ## Features
 
 - One-click action inside SillyTavern's existing Backgrounds drawer.
 - Automatic choice between local AI detail restoration, downscaling, and high-quality compression.
 - Bundled `RealESRGAN_x4plus_anime_6B` restoration model. No Ollama installation, separate AI server, or cloud upload is required.
+- Conservative 40% detail strength by default, with a native slider to reduce merged lines and over-redrawn text or raise restoration strength when an image benefits from it.
 - GPU acceleration through ONNX Runtime WebGPU, with a WebAssembly CPU fallback.
 - Overlapping tile-based processing, visible progress, and cancellation so memory use stays bounded.
+- Selectable batch processing that runs images sequentially instead of loading several enlarged canvases at once.
 - 4096-pixel maximum long edge and high-quality WebP output.
 - Simplified Chinese, Traditional Chinese, and English interface.
 - Side-by-side, click-to-enlarge comparison before anything is replaced.
 - Editable, Windows-safe output filenames with conflict protection.
 - Transactional replacement: the original stays recoverable until the Backgrounds drawer is closed.
-- One-click Undo deletes the unsatisfactory result and restores the original.
+- Per-image Undo deletes only that unsatisfactory result and restores only its original.
 - Phone and tablet guard: processed backgrounds remain usable, but memory-heavy image processing cannot be started on mobile.
 
 ## Install
@@ -40,16 +42,18 @@ In SillyTavern:
 
 1. Open SillyTavern's **Backgrounds** drawer.
 2. Click the sparkle-wand action on a background, or select a background and click **Smart Optimize** at the top.
-3. Review the detected plan.
+3. Review the detected plan. For small images, adjust **Detail strength** if desired.
 4. Click **Start processing**.
 5. Compare the original and processed images. Click either preview to enlarge it, and edit the new filename if desired.
 6. Choose **Use the processed image** to replace the gallery entry, or **Keep the original** to discard the temporary result.
-7. After accepting the processed image, click **Undo** before closing the Backgrounds drawer if you change your mind. The new file is deleted and the original is restored.
-8. If the result is good, close the Backgrounds drawer. That confirms the replacement and deletes the old file.
+7. Continue processing other images without closing the drawer. If one result is poor, use the Undo action on that processed image; other pending replacements are unaffected.
+8. When the remaining results are good, close the Backgrounds drawer. That confirms them and deletes their old files.
+
+For batch work, choose **Batch Optimize**, check the desired backgrounds, select one shared detail strength, and start. Results are added automatically with conflict-safe names and remain independently undoable until the drawer closes. Batch mode intentionally skips per-image comparison dialogs; use the gallery and per-image Undo controls to review the results.
 
 AI restoration is a one-time process. Later background switches load the generated WebP directly.
 
-The bundled model is tuned for anime, illustration, and graphic-art backgrounds. It can reconstruct clean contours and small drawn details that ordinary resizing cannot create. Like every restoration model, it estimates missing detail rather than recovering a mathematically exact original, and it may over-sharpen photographs. The source remains temporarily recoverable while the Backgrounds drawer stays open, so a poor result can be undone safely.
+The bundled model is tuned for anime, illustration, and graphic-art backgrounds. Its output is blended with a high-quality conventional upscale at the selected strength, which keeps more of the source lines while still adding reconstructed detail. Like every restoration model, it estimates missing detail rather than recovering a mathematically exact original. The source remains temporarily recoverable while the Backgrounds drawer stays open, so a poor result can be undone safely.
 
 If processing is cancelled or fails, the original is not changed. If SillyTavern is reloaded before the drawer is closed, the extension chooses safety: it does not delete the original automatically.
 

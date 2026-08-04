@@ -10,7 +10,7 @@ const RUNTIME_URL = new URL('../runtime/', import.meta.url).href;
 let sessionPromise = null;
 let sessionBackend = 'wasm';
 
-export async function restoreIllustration(image, signal, onProgress) {
+export async function restoreIllustration(image, signal, onProgress, strength = 0.4) {
     throwIfAborted(signal);
     const session = await getSession();
     throwIfAborted(signal);
@@ -84,7 +84,21 @@ export async function restoreIllustration(image, signal, onProgress) {
         await nextFrame();
     }
 
-    return outputCanvas;
+    const detailStrength = Math.max(0, Math.min(1, Number(strength) || 0));
+    if (detailStrength >= 1) return outputCanvas;
+
+    const blendedCanvas = document.createElement('canvas');
+    blendedCanvas.width = outputCanvas.width;
+    blendedCanvas.height = outputCanvas.height;
+    const blendedContext = blendedCanvas.getContext('2d', { alpha: false });
+    if (!blendedContext) throw new Error('Canvas 2D is unavailable');
+    blendedContext.imageSmoothingEnabled = true;
+    blendedContext.imageSmoothingQuality = 'high';
+    blendedContext.drawImage(sourceCanvas, 0, 0, blendedCanvas.width, blendedCanvas.height);
+    blendedContext.globalAlpha = detailStrength;
+    blendedContext.drawImage(outputCanvas, 0, 0);
+    blendedContext.globalAlpha = 1;
+    return blendedCanvas;
 }
 
 async function getSession() {

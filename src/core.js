@@ -1,6 +1,7 @@
 export const DEFAULT_SETTINGS = Object.freeze({
     maxLongEdge: 4096,
     webpQuality: 0.88,
+    aiStrength: 0.4,
     aiThreshold: 2560,
     downscaleTolerance: 1.15,
 });
