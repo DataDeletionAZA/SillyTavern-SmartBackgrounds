@@ -160,18 +160,28 @@
     color: var(--SmartThemeEmColor);
 }
 
+.smart-backgrounds-strength-label {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    gap: 6px;
+}
+
+.smart-backgrounds-strength-tip {
+    flex: 0 0 auto;
+    cursor: help;
+    opacity: 0.68;
+}
+
+.smart-backgrounds-strength-tip:hover,
+.smart-backgrounds-strength-tip:focus-visible {
+    color: var(--SmartThemeEmColor);
+    opacity: 1;
+}
+
 .smart-backgrounds-strength input {
     grid-column: 1 / -1;
     width: 100%;
-}
-
-.smart-backgrounds-safety {
-    display: flex;
-    gap: 9px;
-    align-items: flex-start;
-    padding: 10px;
-    border-left: 3px solid var(--okGreen);
-    background: color-mix(in srgb, var(--okGreen) 10%, transparent);
 }
 
 .smart-backgrounds-progress {
@@ -381,7 +391,7 @@
 
 .smart-backgrounds-batch-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 9px;
     max-height: 50vh;
     padding: 2px;
@@ -395,25 +405,33 @@
     flex-direction: column;
     gap: 6px;
     padding: 7px;
-    cursor: pointer;
     border: 1px solid var(--SmartThemeBorderColor);
     border-radius: 8px;
     background: var(--SmartThemeBlurTintColor);
 }
 
-.smart-backgrounds-batch-item:has(input:checked) {
+.smart-backgrounds-batch-item:has(.smart-backgrounds-batch-choice input:checked) {
     border-color: var(--SmartThemeEmColor);
     box-shadow: 0 0 0 1px var(--SmartThemeEmColor);
 }
 
-.smart-backgrounds-batch-item input {
+.smart-backgrounds-batch-choice {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    gap: 6px;
+    cursor: pointer;
+}
+
+.smart-backgrounds-batch-choice input {
     position: absolute;
-    top: 12px;
-    left: 12px;
+    top: 5px;
+    left: 5px;
     z-index: 1;
 }
 
-.smart-backgrounds-batch-item img {
+.smart-backgrounds-batch-choice img {
     width: 100%;
     aspect-ratio: 16 / 9;
     border-radius: 5px;
@@ -421,11 +439,24 @@
     background: var(--black30a);
 }
 
-.smart-backgrounds-batch-item span {
+.smart-backgrounds-batch-choice > span {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.88em;
+}
+
+.smart-backgrounds-batch-strength {
+    padding: 6px 2px 1px;
+    border: 0;
+    border-top: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 0;
+    background: transparent;
+    font-size: 0.84em;
+}
+
+.smart-backgrounds-batch-strength:has(input:disabled) {
+    opacity: 0.42;
 }
 
 @media (max-width: 700px) {

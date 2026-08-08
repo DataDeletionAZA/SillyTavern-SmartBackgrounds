@@ -17,7 +17,7 @@ After processing, a side-by-side window lets you compare the original and proces
 - Conservative 40% detail strength by default, with a native slider to reduce merged lines and over-redrawn text or raise restoration strength when an image benefits from it.
 - GPU acceleration through ONNX Runtime WebGPU, with a WebAssembly CPU fallback.
 - Overlapping tile-based processing, visible progress, and cancellation so memory use stays bounded.
-- Selectable batch processing that runs images sequentially instead of loading several enlarged canvases at once.
+- Selectable batch processing with an independent detail-strength slider and review step for every image; processing remains sequential to keep memory use bounded.
 - 4096-pixel maximum long edge and high-quality WebP output.
 - Simplified Chinese, Traditional Chinese, and English interface.
 - Side-by-side, click-to-enlarge comparison before anything is replaced.
@@ -49,7 +49,7 @@ In SillyTavern:
 7. Continue processing other images without closing the drawer. If one result is poor, use the Undo action on that processed image; other pending replacements are unaffected.
 8. When the remaining results are good, close the Backgrounds drawer. That confirms them and deletes their old files.
 
-For batch work, choose **Batch Optimize**, check the desired backgrounds, select one shared detail strength, and start. Results are added automatically with conflict-safe names and remain independently undoable until the drawer closes. Batch mode intentionally skips per-image comparison dialogs; use the gallery and per-image Undo controls to review the results.
+For batch work, choose **Batch Optimize**, check the desired backgrounds, and set each selected image's detail strength independently. The extension processes them one at a time and pauses after each image for side-by-side comparison, enlargement, and filename editing. Accepted results remain independently undoable until the drawer closes.
 
 AI restoration is a one-time process. Later background switches load the generated WebP directly.
 

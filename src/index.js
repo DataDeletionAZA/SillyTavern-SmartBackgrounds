@@ -80,7 +80,7 @@ function addPendingReplacementBanner() {
         <i class="fa-solid fa-clock-rotate-left smart-backgrounds-pending-icon" aria-hidden="true"></i>
         <div class="smart-backgrounds-pending-copy">
             <strong></strong>
-            <span>${escapeHtml(t`Use the undo button on a processed image to restore only that original. Originals are deleted after Backgrounds is closed.`)}</span>
+            <span>${escapeHtml(t`Click the undo button above a processed image to restore its original; the original cache is deleted only after Backgrounds is closed.`)}</span>
         </div>
     `;
     header.insertAdjacentElement('afterend', banner);
@@ -289,7 +289,7 @@ async function openBatchOptimizer() {
 
     const selection = await chooseBatchBackgrounds(candidates);
     if (!selection) return;
-    await processBatch(selection.filenames, selection.aiStrength);
+    await processBatch(selection);
 }
 
 function getBatchCandidates() {
@@ -311,8 +311,6 @@ async function chooseBatchBackgrounds(candidates) {
     content.className = 'smart-backgrounds-batch';
     const title = document.createElement('h3');
     title.textContent = t`Choose backgrounds to optimize`;
-    const note = document.createElement('p');
-    note.textContent = t`Images are processed one at a time to limit memory use. Results can be undone separately before Backgrounds is closed.`;
 
     const toolbar = document.createElement('div');
     toolbar.className = 'smart-backgrounds-batch-toolbar';
@@ -330,10 +328,13 @@ async function chooseBatchBackgrounds(candidates) {
 
     const list = document.createElement('div');
     list.className = 'smart-backgrounds-batch-grid';
+    const controls = new Map();
     for (const candidate of candidates) {
-        const label = document.createElement('label');
-        label.className = 'smart-backgrounds-batch-item';
-        label.title = candidate.filename;
+        const item = document.createElement('div');
+        item.className = 'smart-backgrounds-batch-item';
+        const choice = document.createElement('label');
+        choice.className = 'smart-backgrounds-batch-choice';
+        choice.title = candidate.filename;
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.value = candidate.filename;
@@ -343,27 +344,41 @@ async function chooseBatchBackgrounds(candidates) {
         image.loading = 'lazy';
         const name = document.createElement('span');
         name.textContent = candidate.filename;
-        label.append(checkbox, image, name);
-        list.append(label);
+        choice.append(checkbox, image, name);
+
+        const strength = buildStrengthControl();
+        strength.root.classList.add('smart-backgrounds-batch-strength');
+        strength.input.disabled = true;
+        checkbox.addEventListener('change', () => {
+            strength.input.disabled = !checkbox.checked;
+        });
+        controls.set(candidate.filename, { checkbox, strengthInput: strength.input });
+        item.append(choice, strength.root);
+        list.append(item);
     }
 
     const updateCount = () => {
-        const selectedCount = list.querySelectorAll('input:checked').length;
+        const selectedCount = list.querySelectorAll('input[type="checkbox"]:checked').length;
         count.textContent = `${selectedCount} ${t`selected`}`;
     };
     list.addEventListener('change', updateCount);
     selectAll.addEventListener('click', () => {
-        for (const checkbox of list.querySelectorAll('input')) checkbox.checked = true;
+        for (const { checkbox, strengthInput } of controls.values()) {
+            checkbox.checked = true;
+            strengthInput.disabled = false;
+        }
         updateCount();
     });
     clearAll.addEventListener('click', () => {
-        for (const checkbox of list.querySelectorAll('input')) checkbox.checked = false;
+        for (const { checkbox, strengthInput } of controls.values()) {
+            checkbox.checked = false;
+            strengthInput.disabled = true;
+        }
         updateCount();
     });
 
-    const strength = buildStrengthControl();
-    content.append(title, note, toolbar, list, strength.root);
-    let filenames = [];
+    content.append(title, toolbar, list);
+    let selectedItems = [];
     const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
         large: true,
         allowVerticalScrolling: true,
@@ -371,8 +386,13 @@ async function chooseBatchBackgrounds(candidates) {
         cancelButton: t`Cancel`,
         onClosing: closingPopup => {
             if (closingPopup.result !== POPUP_RESULT.AFFIRMATIVE) return true;
-            filenames = Array.from(list.querySelectorAll('input:checked'), input => input.value);
-            if (filenames.length) return true;
+            selectedItems = Array.from(controls.entries())
+                .filter(([, control]) => control.checkbox.checked)
+                .map(([filename, control]) => ({
+                    filename,
+                    aiStrength: Number(control.strengthInput.value) / 100,
+                }));
+            if (selectedItems.length) return true;
             toastr.warning(t`Choose at least one background.`);
             return false;
         },
@@ -380,13 +400,10 @@ async function chooseBatchBackgrounds(candidates) {
     popup.dlg.classList.add('smart-backgrounds-batch-popup');
     const result = await popup.show();
     if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
-    return {
-        filenames,
-        aiStrength: Number(strength.input.value) / 100,
-    };
+    return selectedItems;
 }
 
-async function processBatch(filenames, aiStrength) {
+async function processBatch(items) {
     activeAbortController = new AbortController();
     let progressCanClose = false;
     const progress = buildProgressView('', t`Batch Optimize`);
@@ -408,12 +425,14 @@ async function processBatch(filenames, aiStrength) {
     const completed = [];
     let failed = 0;
     try {
-        for (let index = 0; index < filenames.length; index += 1) {
+        for (let index = 0; index < items.length; index += 1) {
             throwIfAborted(activeAbortController.signal);
-            const filename = filenames[index];
+            const { filename, aiStrength } = items[index];
             let analysis = null;
+            let outputObjectUrl = '';
             try {
-                updateProgress(progress, `${index + 1}/${filenames.length} · ${filename}`, index / filenames.length);
+                progress.cancel.disabled = false;
+                updateProgress(progress, `${index + 1}/${items.length} · ${filename}`, index / items.length);
                 analysis = await analyzeBackground(filename);
                 const plan = classifyImage(analysis, DEFAULT_SETTINGS);
                 const result = await createOptimizedBackground(
@@ -423,15 +442,29 @@ async function processBatch(filenames, aiStrength) {
                     aiStrength,
                     (label, value) => updateProgress(
                         progress,
-                        `${index + 1}/${filenames.length} · ${label}`,
-                        (index + value) / filenames.length,
+                        `${index + 1}/${items.length} · ${label}`,
+                        (index + value) / items.length,
                     ),
                 );
                 throwIfAborted(activeAbortController.signal);
-                const outputName = makeUniqueWebpFilename(
-                    makeOutputName(filename, plan.mode),
+                outputObjectUrl = URL.createObjectURL(result.blob);
+                progress.cancel.disabled = true;
+                updateProgress(
+                    progress,
+                    `${index + 1}/${items.length} · ${t`Processing finished. Review the result.`}`,
+                    (index + 0.9) / items.length,
+                );
+                const outputName = await showReplacementConfirmation(
+                    analysis,
+                    result.blob,
+                    outputObjectUrl,
+                    result.target,
+                    plan,
                     occupiedNames,
                 );
+                if (!outputName) continue;
+
+                throwIfAborted(activeAbortController.signal);
                 const uploadedName = await uploadBackground(result.blob, outputName);
                 occupiedNames.add(uploadedName);
                 pendingReplacements.set(uploadedName, {
@@ -445,6 +478,7 @@ async function processBatch(filenames, aiStrength) {
                 console.error(`[${MODULE_ID}] Batch item failed: ${filename}`, error);
             } finally {
                 if (analysis) URL.revokeObjectURL(analysis.objectUrl);
+                if (outputObjectUrl) URL.revokeObjectURL(outputObjectUrl);
             }
         }
 
@@ -569,20 +603,13 @@ function buildAnalysisView(analysis, plan) {
     appendInfo(info, t`File size`, formatBytes(analysis.bytes));
     appendInfo(info, t`Planned output`, `${target.width} × ${target.height} WebP`);
 
-    const safety = document.createElement('div');
-    safety.className = 'smart-backgrounds-safety';
-    safety.innerHTML = `
-        <i class="fa-solid fa-shield-heart"></i>
-        <span>${escapeHtml(t`After processing, compare both images and choose whether to replace the original.`)}</span>
-    `;
-
     let strengthInput = null;
     if (plan.mode === 'ai') {
         const control = buildStrengthControl();
         strengthInput = control.input;
-        details.append(title, badge, info, control.root, safety);
+        details.append(title, badge, info, control.root);
     } else {
-        details.append(title, badge, info, safety);
+        details.append(title, badge, info);
     }
     content.append(preview, details);
     return { content, strengthInput };
@@ -591,10 +618,17 @@ function buildAnalysisView(analysis, plan) {
 function buildStrengthControl() {
     const root = document.createElement('label');
     root.className = 'smart-backgrounds-strength';
-    root.title = t`Lower strength preserves original lines and text; higher strength lets the model redraw more detail.`;
 
     const heading = document.createElement('span');
-    heading.textContent = t`Detail strength`;
+    heading.className = 'smart-backgrounds-strength-label';
+    heading.append(t`Detail strength`);
+    const tipText = t`Only used for detail restoration. 20–35 preserves more original lines; 40–60 balances clarity and stability; 65–80 redraws more detail; 85–100 is strongest and may merge lines or text.`;
+    const tip = document.createElement('span');
+    tip.className = 'smart-backgrounds-strength-tip fa-solid fa-circle-question';
+    tip.title = tipText;
+    tip.tabIndex = 0;
+    tip.setAttribute('aria-label', tipText);
+    heading.append(tip);
     const value = document.createElement('output');
     value.textContent = `${Math.round(DEFAULT_SETTINGS.aiStrength * 100)}%`;
     const input = document.createElement('input');
@@ -785,11 +819,18 @@ async function upscaleLocally(image, signal, onProgress, aiStrength) {
     return result;
 }
 
-async function showReplacementConfirmation(analysis, outputBlob, outputUrl, target, plan) {
+async function showReplacementConfirmation(
+    analysis,
+    outputBlob,
+    outputUrl,
+    target,
+    plan,
+    existingNames = getGalleryBackgroundNames(),
+) {
     const filenameInputId = 'smart_backgrounds_output_filename';
     const proposedName = makeUniqueWebpFilename(
         makeOutputName(analysis.filename, plan.mode),
-        getGalleryBackgroundNames(),
+        existingNames,
     );
     const content = buildComparisonView(analysis, outputBlob, outputUrl, target);
     let confirmedName = '';
