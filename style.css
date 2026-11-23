@@ -144,6 +144,29 @@
     overflow-wrap: anywhere;
 }
 
+.smart-backgrounds-model,
+.smart-backgrounds-retry {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.smart-backgrounds-model select {
+    flex: 1;
+    min-width: min(150px, 100%);
+    width: auto;
+    margin: 0;
+}
+
+.smart-backgrounds-retry {
+    justify-content: center;
+}
+
+.smart-backgrounds-retry .menu_button {
+    width: auto;
+}
+
 .smart-backgrounds-strength {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;

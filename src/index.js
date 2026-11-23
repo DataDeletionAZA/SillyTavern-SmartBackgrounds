@@ -4,10 +4,12 @@ import { t } from '/scripts/i18n.js';
 import { Popup, POPUP_RESULT, POPUP_TYPE } from '/scripts/popup.js';
 
 import {
+    DEFAULT_MODEL_ID,
     DEFAULT_SETTINGS,
+    RESTORATION_MODELS,
     classifyImage,
-    fitWithinLongEdge,
     formatBytes,
+    getPlannedDimensions,
     isMobilePlatform,
     makeOutputName,
     makeUniqueWebpFilename,
@@ -19,6 +21,7 @@ import { restoreIllustration } from './realesrgan.js';
 const MODULE_ID = 'smart-backgrounds';
 const ACTION = 'smart-background-optimize';
 const UNDO_ACTION = 'smart-background-undo';
+const RETRY_MODEL = POPUP_RESULT.CUSTOM1;
 let galleryObserver = null;
 let drawerObserver = null;
 let activeAbortController = null;
@@ -266,9 +269,10 @@ async function openOptimizer(filename) {
         return;
     }
 
-    await processBackground(analysis, plan, view.strengthInput
-        ? Number(view.strengthInput.value) / 100
-        : DEFAULT_SETTINGS.aiStrength);
+    await processBackground(analysis, plan, {
+        modelId: view.modelSelect?.value ?? DEFAULT_MODEL_ID,
+        aiStrength: view.strengthInput ? Number(view.strengthInput.value) / 100 : DEFAULT_SETTINGS.aiStrength,
+    });
 }
 
 async function openBatchOptimizer() {
@@ -325,6 +329,7 @@ async function chooseBatchBackgrounds(candidates) {
     const count = document.createElement('span');
     count.textContent = t`0 selected`;
     toolbar.append(selectAll, clearAll, count);
+    const model = buildModelControl();
 
     const list = document.createElement('div');
     list.className = 'smart-backgrounds-batch-grid';
@@ -377,7 +382,7 @@ async function chooseBatchBackgrounds(candidates) {
         updateCount();
     });
 
-    content.append(title, toolbar, list);
+    content.append(title, toolbar, model.root, list);
     let selectedItems = [];
     const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
         large: true,
@@ -390,6 +395,7 @@ async function chooseBatchBackgrounds(candidates) {
                 .filter(([, control]) => control.checkbox.checked)
                 .map(([filename, control]) => ({
                     filename,
+                    modelId: model.select.value,
                     aiStrength: Number(control.strengthInput.value) / 100,
                 }));
             if (selectedItems.length) return true;
@@ -427,45 +433,29 @@ async function processBatch(items) {
     try {
         for (let index = 0; index < items.length; index += 1) {
             throwIfAborted(activeAbortController.signal);
-            const { filename, aiStrength } = items[index];
+            const { filename, modelId, aiStrength } = items[index];
             let analysis = null;
-            let outputObjectUrl = '';
             try {
                 progress.cancel.disabled = false;
                 updateProgress(progress, `${index + 1}/${items.length} · ${filename}`, index / items.length);
                 analysis = await analyzeBackground(filename);
                 const plan = classifyImage(analysis, DEFAULT_SETTINGS);
-                const result = await createOptimizedBackground(
+                const result = await reviewOptimizedBackground(
                     analysis,
                     plan,
-                    activeAbortController.signal,
-                    aiStrength,
+                    { modelId, aiStrength },
+                    progress,
                     (label, value) => updateProgress(
                         progress,
                         `${index + 1}/${items.length} · ${label}`,
                         (index + value) / items.length,
                     ),
-                );
-                throwIfAborted(activeAbortController.signal);
-                outputObjectUrl = URL.createObjectURL(result.blob);
-                progress.cancel.disabled = true;
-                updateProgress(
-                    progress,
-                    `${index + 1}/${items.length} · ${t`Processing finished. Review the result.`}`,
-                    (index + 0.9) / items.length,
-                );
-                const outputName = await showReplacementConfirmation(
-                    analysis,
-                    result.blob,
-                    outputObjectUrl,
-                    result.target,
-                    plan,
                     occupiedNames,
                 );
-                if (!outputName) continue;
+                if (!result) continue;
 
                 throwIfAborted(activeAbortController.signal);
-                const uploadedName = await uploadBackground(result.blob, outputName);
+                const uploadedName = await uploadBackground(result.blob, result.outputName);
                 occupiedNames.add(uploadedName);
                 pendingReplacements.set(uploadedName, {
                     originalFilename: filename,
@@ -478,7 +468,6 @@ async function processBatch(items) {
                 console.error(`[${MODULE_ID}] Batch item failed: ${filename}`, error);
             } finally {
                 if (analysis) URL.revokeObjectURL(analysis.objectUrl);
-                if (outputObjectUrl) URL.revokeObjectURL(outputObjectUrl);
             }
         }
 
@@ -590,29 +579,45 @@ function buildAnalysisView(analysis, plan) {
     badge.className = `smart-backgrounds-plan smart-backgrounds-plan-${plan.mode}`;
     badge.innerHTML = `<i class="${planIcon(plan.mode)}"></i><span>${escapeHtml(planTitle(plan))}</span>`;
 
-    const target = fitWithinLongEdge(
-        analysis.width * (plan.mode === 'ai' ? plan.scale : 1),
-        analysis.height * (plan.mode === 'ai' ? plan.scale : 1),
-        plan.targetLongEdge,
-    );
-
     const info = document.createElement('dl');
     info.className = 'smart-backgrounds-info';
     appendInfo(info, t`File`, analysis.filename);
     appendInfo(info, t`Original size`, `${analysis.width} × ${analysis.height}`);
     appendInfo(info, t`File size`, formatBytes(analysis.bytes));
-    appendInfo(info, t`Planned output`, `${target.width} × ${target.height} WebP`);
+    const output = appendInfo(info, t`Planned output`, '');
+    const updateOutput = modelId => {
+        const target = getPlannedDimensions(analysis, plan, modelId);
+        output.textContent = `${target.width} × ${target.height} WebP`;
+    };
+    updateOutput(DEFAULT_MODEL_ID);
 
     let strengthInput = null;
+    let modelSelect = null;
     if (plan.mode === 'ai') {
         const control = buildStrengthControl();
+        const model = buildModelControl();
         strengthInput = control.input;
-        details.append(title, badge, info, control.root);
+        modelSelect = model.select;
+        modelSelect.addEventListener('change', () => updateOutput(modelSelect.value));
+        details.append(title, badge, info, model.root, control.root);
     } else {
         details.append(title, badge, info);
     }
     content.append(preview, details);
-    return { content, strengthInput };
+    return { content, strengthInput, modelSelect };
+}
+
+function buildModelControl(modelId = DEFAULT_MODEL_ID) {
+    const root = document.createElement('label');
+    root.className = 'smart-backgrounds-model';
+    root.textContent = t`Restoration model`;
+    const select = document.createElement('select');
+    for (const [id, model] of Object.entries(RESTORATION_MODELS)) {
+        select.add(new Option(model.name, id));
+    }
+    select.value = modelId;
+    root.append(select);
+    return { root, select };
 }
 
 function buildStrengthControl() {
@@ -652,10 +657,11 @@ function appendInfo(list, label, value) {
     const description = document.createElement('dd');
     description.textContent = value;
     list.append(term, description);
+    return description;
 }
 
 function planTitle(plan) {
-    if (plan.mode === 'ai') return t`Illustration detail restoration ×4`;
+    if (plan.mode === 'ai') return t`Illustration detail restoration`;
     if (plan.mode === 'downscale') return t`High-resolution performance optimization`;
     return t`Loss-conscious compression`;
 }
@@ -666,11 +672,10 @@ function planIcon(mode) {
     return 'fa-solid fa-box-archive';
 }
 
-async function processBackground(analysis, plan, aiStrength) {
+async function processBackground(analysis, plan, settings) {
     activeAbortController = new AbortController();
     let progressCanClose = false;
     let uploadedName = '';
-    let outputObjectUrl = '';
     const progress = buildProgressView(analysis.filename, plan);
     const progressPopup = new Popup(progress.root, POPUP_TYPE.DISPLAY, '', {
         large: false,
@@ -687,28 +692,15 @@ async function processBackground(analysis, plan, aiStrength) {
 
     const popupPromise = progressPopup.show();
     try {
-        updateProgress(progress, t`Preparing image…`, 0.03);
-        const { blob: outputBlob, target } = await createOptimizedBackground(
+        const result = await reviewOptimizedBackground(
             analysis,
             plan,
-            activeAbortController.signal,
-            aiStrength,
+            settings,
+            progress,
             (label, value) => updateProgress(progress, label, value),
         );
 
-        throwIfAborted(activeAbortController.signal);
-        outputObjectUrl = URL.createObjectURL(outputBlob);
-        progress.cancel.disabled = true;
-        updateProgress(progress, t`Processing finished. Review the result.`, 1);
-        const outputName = await showReplacementConfirmation(
-            analysis,
-            outputBlob,
-            outputObjectUrl,
-            target,
-            plan,
-        );
-
-        if (!outputName) {
+        if (!result) {
             toastr.info(t`The processed result was discarded. The original was not changed.`);
             progressCanClose = true;
             await progressPopup.complete(POPUP_RESULT.CANCELLED);
@@ -717,7 +709,7 @@ async function processBackground(analysis, plan, aiStrength) {
 
         throwIfAborted(activeAbortController.signal);
         updateProgress(progress, t`Adding the new background to SillyTavern…`, 0.97);
-        uploadedName = await uploadBackground(outputBlob, outputName);
+        uploadedName = await uploadBackground(result.blob, result.outputName);
 
         const selected = await refreshAndSelectUploadedBackground(uploadedName, analysis.filename);
         if (!selected) {
@@ -751,32 +743,55 @@ async function processBackground(analysis, plan, aiStrength) {
         await progressPopup.complete(POPUP_RESULT.CANCELLED);
     } finally {
         URL.revokeObjectURL(analysis.objectUrl);
-        if (outputObjectUrl) URL.revokeObjectURL(outputObjectUrl);
         activeAbortController = null;
         await popupPromise;
     }
 }
 
-async function createOptimizedBackground(analysis, plan, signal, aiStrength, onProgress) {
+async function reviewOptimizedBackground(analysis, plan, settings, progress, onProgress, existingNames) {
+    const { signal } = activeAbortController;
+    let { modelId } = settings;
+    let draftName;
+    while (true) {
+        progress.cancel.disabled = false;
+        const { blob, target } = await createOptimizedBackground(
+            analysis, plan, signal, { ...settings, modelId }, onProgress,
+        );
+        throwIfAborted(signal);
+        progress.cancel.disabled = true;
+        onProgress(t`Processing finished. Review the result.`, 0.95);
+        const outputUrl = URL.createObjectURL(blob);
+        try {
+            const choice = await showReplacementConfirmation(
+                analysis, blob, outputUrl, target, plan, modelId, existingNames, draftName,
+            );
+            if (!choice) return null;
+            if (!choice.retryModelId) return { blob, outputName: choice.outputName };
+            modelId = choice.retryModelId;
+            draftName = choice.outputName;
+        } finally {
+            URL.revokeObjectURL(outputUrl);
+        }
+    }
+}
+
+async function createOptimizedBackground(analysis, plan, signal, { aiStrength, modelId }, onProgress) {
     onProgress(t`Preparing image…`, 0.03);
     let sourceImage = await loadImage(analysis.objectUrl);
 
     if (plan.mode === 'ai') {
-        sourceImage = await upscaleLocally(
+        sourceImage = await restoreIllustration(
             sourceImage,
             signal,
             value => onProgress(t`Restoring details…`, 0.08 + value * 0.72),
             aiStrength,
+            modelId,
         );
     }
 
     throwIfAborted(signal);
     onProgress(t`Creating the optimized background…`, 0.84);
-    const target = fitWithinLongEdge(
-        sourceImage.naturalWidth || sourceImage.width,
-        sourceImage.naturalHeight || sourceImage.height,
-        plan.targetLongEdge,
-    );
+    const target = getPlannedDimensions(analysis, plan, modelId);
     const blob = await renderWebp(sourceImage, target, DEFAULT_SETTINGS.webpQuality);
     return { blob, target };
 }
@@ -813,26 +828,23 @@ function updateProgress(progress, label, value) {
     progress.label.textContent = `${label} ${percentage}%`;
 }
 
-async function upscaleLocally(image, signal, onProgress, aiStrength) {
-    const result = await restoreIllustration(image, signal, onProgress, aiStrength);
-    console.info(`[${MODULE_ID}] Real-ESRGAN detail restoration completed.`);
-    return result;
-}
-
 async function showReplacementConfirmation(
     analysis,
     outputBlob,
     outputUrl,
     target,
     plan,
+    modelId,
     existingNames = getGalleryBackgroundNames(),
+    draftName,
 ) {
     const filenameInputId = 'smart_backgrounds_output_filename';
-    const proposedName = makeUniqueWebpFilename(
+    const proposedName = draftName ?? makeUniqueWebpFilename(
         makeOutputName(analysis.filename, plan.mode),
         existingNames,
     );
-    const content = buildComparisonView(analysis, outputBlob, outputUrl, target);
+    const model = plan.mode === 'ai' ? RESTORATION_MODELS[modelId] : null;
+    const content = buildComparisonView(analysis, outputBlob, outputUrl, target, model?.name);
     let confirmedName = '';
 
     const popup = new Popup(content, POPUP_TYPE.CONFIRM, '', {
@@ -877,12 +889,32 @@ async function showReplacementConfirmation(
         },
     });
     popup.dlg.classList.add('smart-backgrounds-comparison-popup');
+    let retry;
+    if (model) {
+        retry = buildModelControl(modelId);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'menu_button';
+        button.textContent = t`Retry with selected model`;
+        button.disabled = true;
+        retry.select.addEventListener('change', () => {
+            button.disabled = retry.select.value === modelId;
+        });
+        button.addEventListener('click', () => void popup.complete(RETRY_MODEL));
+        const row = document.createElement('div');
+        row.className = 'smart-backgrounds-retry';
+        row.append(retry.root, button);
+        content.append(row);
+    }
 
     const result = await popup.show();
-    return result === POPUP_RESULT.AFFIRMATIVE ? confirmedName : '';
+    if (result === RETRY_MODEL && retry) {
+        return { retryModelId: retry.select.value, outputName: popup.inputResults?.get(filenameInputId) };
+    }
+    return result === POPUP_RESULT.AFFIRMATIVE ? { outputName: confirmedName } : null;
 }
 
-function buildComparisonView(analysis, outputBlob, outputUrl, target) {
+function buildComparisonView(analysis, outputBlob, outputUrl, target, modelName) {
     const content = document.createElement('div');
     content.className = 'smart-backgrounds-comparison';
 
@@ -901,7 +933,7 @@ function buildComparisonView(analysis, outputBlob, outputUrl, target) {
             t`Processed`,
             outputUrl,
             t`Processed preview`,
-            `${target.width} × ${target.height} · ${formatBytes(outputBlob.size)}`,
+            [modelName, `${target.width} × ${target.height}`, formatBytes(outputBlob.size)].filter(Boolean).join(' · '),
         ),
     );
 

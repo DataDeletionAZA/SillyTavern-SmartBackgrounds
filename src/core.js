@@ -6,6 +6,19 @@ export const DEFAULT_SETTINGS = Object.freeze({
     downscaleTolerance: 1.15,
 });
 
+export const DEFAULT_MODEL_ID = 'realesrgan';
+export const RESTORATION_MODELS = Object.freeze({
+    realesrgan: { name: 'Real-ESRGAN Anime 6B ×4', filename: 'RealESRGAN_x4plus_anime_6B.onnx', scale: 4, alignment: 1 },
+    fallin: { name: 'Fallin Soft ×2', filename: 'Fallin_Soft_x2.onnx', scale: 2, alignment: 4, minTileSize: 40 },
+    alchemy: { name: 'Alchemy ×4', filename: 'Alchemy_x4.onnx', scale: 4, alignment: 1 },
+    apisr: { name: 'APISR ×2', filename: 'APISR_RRDB_x2.onnx', scale: 2, alignment: 2 },
+});
+
+export function getPlannedDimensions(image, plan, modelId) {
+    const scale = plan.mode === 'ai' ? Math.min(plan.scale, RESTORATION_MODELS[modelId].scale) : 1;
+    return fitWithinLongEdge(image.width * scale, image.height * scale, plan.targetLongEdge);
+}
+
 /**
  * Decide how a background should be processed.
  *

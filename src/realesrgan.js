@@ -1,19 +1,19 @@
 import * as ort from 'onnxruntime-web/webgpu';
-import { buildTilePlan } from './core.js';
+import { buildTilePlan, RESTORATION_MODELS } from './core.js';
 
-const MODEL_SCALE = 4;
 const TILE_SIZE = 128;
 const TILE_OVERLAP = 16;
-const MODEL_URL = new URL('../models/RealESRGAN_x4plus_anime_6B.onnx', import.meta.url).href;
 const RUNTIME_URL = new URL('../runtime/', import.meta.url).href;
 
 let sessionPromise = null;
-let sessionBackend = 'wasm';
+let loadedModelId = null;
 
-export async function restoreIllustration(image, signal, onProgress, strength = 0.4) {
+export async function restoreIllustration(image, signal, onProgress, strength, modelId) {
     throwIfAborted(signal);
-    const session = await getSession();
+    const model = RESTORATION_MODELS[modelId];
+    const { session, backend } = await getSession(modelId);
     throwIfAborted(signal);
+    const { scale, alignment, minTileSize = 1 } = model;
 
     const sourceCanvas = document.createElement('canvas');
     sourceCanvas.width = image.naturalWidth || image.width;
@@ -26,8 +26,8 @@ export async function restoreIllustration(image, signal, onProgress, strength = 
     sourceContext.drawImage(image, 0, 0);
 
     const outputCanvas = document.createElement('canvas');
-    outputCanvas.width = sourceCanvas.width * MODEL_SCALE;
-    outputCanvas.height = sourceCanvas.height * MODEL_SCALE;
+    outputCanvas.width = sourceCanvas.width * scale;
+    outputCanvas.height = sourceCanvas.height * scale;
     const outputContext = outputCanvas.getContext('2d', { alpha: false });
     if (!outputContext) throw new Error('Canvas 2D is unavailable');
 
@@ -45,11 +45,13 @@ export async function restoreIllustration(image, signal, onProgress, strength = 
             tile.sourceWidth,
             tile.sourceHeight,
         );
-        const inputData = imageDataToNchw(imageData);
+        const inputWidth = Math.max(minTileSize, Math.ceil(tile.sourceWidth / alignment) * alignment);
+        const inputHeight = Math.max(minTileSize, Math.ceil(tile.sourceHeight / alignment) * alignment);
+        const inputData = imageDataToNchw(imageData, inputWidth, inputHeight);
         const inputTensor = new ort.Tensor(
             'float32',
             inputData,
-            [1, 3, tile.sourceHeight, tile.sourceWidth],
+            [1, 3, inputHeight, inputWidth],
         );
 
         let outputTensor;
@@ -60,27 +62,30 @@ export async function restoreIllustration(image, signal, onProgress, strength = 
             outputTensor = results[session.outputNames[0]];
             const outputData = await outputTensor.getData();
             const [, , outputHeight, outputWidth] = outputTensor.dims;
+            if (outputWidth !== inputWidth * scale || outputHeight !== inputHeight * scale) {
+                throw new Error(`Unexpected output size from ${model.name}`);
+            }
             tileCanvas.width = outputWidth;
             tileCanvas.height = outputHeight;
             tileContext.putImageData(nchwToImageData(outputData, outputWidth, outputHeight), 0, 0);
 
             outputContext.drawImage(
                 tileCanvas,
-                tile.cropX * MODEL_SCALE,
-                tile.cropY * MODEL_SCALE,
-                tile.coreWidth * MODEL_SCALE,
-                tile.coreHeight * MODEL_SCALE,
-                tile.x * MODEL_SCALE,
-                tile.y * MODEL_SCALE,
-                tile.coreWidth * MODEL_SCALE,
-                tile.coreHeight * MODEL_SCALE,
+                tile.cropX * scale,
+                tile.cropY * scale,
+                tile.coreWidth * scale,
+                tile.coreHeight * scale,
+                tile.x * scale,
+                tile.y * scale,
+                tile.coreWidth * scale,
+                tile.coreHeight * scale,
             );
         } finally {
             inputTensor.dispose();
             outputTensor?.dispose();
         }
 
-        onProgress((index + 1) / tiles.length, sessionBackend);
+        onProgress((index + 1) / tiles.length, backend);
         await nextFrame();
     }
 
@@ -101,10 +106,19 @@ export async function restoreIllustration(image, signal, onProgress, strength = 
     return blendedCanvas;
 }
 
-async function getSession() {
-    if (!sessionPromise) {
+async function getSession(modelId) {
+    if (loadedModelId !== modelId || !sessionPromise) {
+        const previous = sessionPromise;
+        loadedModelId = modelId;
         configureRuntime();
-        sessionPromise = createSession().catch((error) => {
+        sessionPromise = (async () => {
+            if (previous) {
+                const { session } = await previous;
+                await session.release();
+            }
+            const modelUrl = new URL(`../models/${RESTORATION_MODELS[modelId].filename}`, import.meta.url).href;
+            return await createSession(modelUrl);
+        })().catch((error) => {
             sessionPromise = null;
             throw error;
         });
@@ -120,32 +134,37 @@ function configureRuntime() {
         : 1;
 }
 
-async function createSession() {
+async function createSession(modelUrl) {
     if (navigator.gpu) {
         try {
-            sessionBackend = 'webgpu';
-            return await ort.InferenceSession.create(MODEL_URL, {
+            const session = await ort.InferenceSession.create(modelUrl, {
                 executionProviders: ['webgpu'],
                 preferredOutputLocation: 'cpu',
             });
+            return { session, backend: 'webgpu' };
         } catch (error) {
             console.warn('[smart-backgrounds] WebGPU model startup failed; using the CPU fallback.', error);
         }
     }
 
-    sessionBackend = 'wasm';
-    return await ort.InferenceSession.create(MODEL_URL, {
+    const session = await ort.InferenceSession.create(modelUrl, {
         executionProviders: ['wasm'],
     });
+    return { session, backend: 'wasm' };
 }
 
-function imageDataToNchw(imageData) {
-    const pixels = imageData.width * imageData.height;
+function imageDataToNchw(imageData, width, height) {
+    const pixels = width * height;
     const output = new Float32Array(pixels * 3);
-    for (let index = 0; index < pixels; index += 1) {
-        output[index] = imageData.data[index * 4] / 255;
-        output[pixels + index] = imageData.data[index * 4 + 1] / 255;
-        output[pixels * 2 + index] = imageData.data[index * 4 + 2] / 255;
+    for (let y = 0; y < height; y += 1) {
+        const sourceRow = Math.min(y, imageData.height - 1) * imageData.width;
+        for (let x = 0; x < width; x += 1) {
+            const index = y * width + x;
+            const source = (sourceRow + Math.min(x, imageData.width - 1)) * 4;
+            output[index] = imageData.data[source] / 255;
+            output[pixels + index] = imageData.data[source + 1] / 255;
+            output[pixels * 2 + index] = imageData.data[source + 2] / 255;
+        }
     }
     return output;
 }

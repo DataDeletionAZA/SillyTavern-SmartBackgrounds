@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 
 import {
     DEFAULT_SETTINGS,
+    RESTORATION_MODELS,
     buildTilePlan,
     chooseAiScale,
     classifyImage,
     fitWithinLongEdge,
+    getPlannedDimensions,
     isMobilePlatform,
     makeOutputName,
     makeUniqueWebpFilename,
@@ -26,6 +28,23 @@ test('uses conservative restoration strength by default', () => {
 
 test('plans a 2x final output for images already near 2K', () => {
     assert.equal(chooseAiScale(2048, 4096), 2);
+});
+
+test('plans each model at its native scale or below the background size limit', () => {
+    const small = { width: 736, height: 414, bytes: 20_000 };
+    const near2k = { width: 2480, height: 1240, bytes: 100_000 };
+    const smallPlan = classifyImage(small);
+    const near2kPlan = classifyImage(near2k);
+    assert.deepEqual(
+        Object.keys(RESTORATION_MODELS).map(id => getPlannedDimensions(small, smallPlan, id)),
+        [
+            { width: 2944, height: 1656 },
+            { width: 1472, height: 828 },
+            { width: 2944, height: 1656 },
+            { width: 1472, height: 828 },
+        ],
+    );
+    assert.deepEqual(getPlannedDimensions(near2k, near2kPlan, 'apisr'), { width: 4096, height: 2048 });
 });
 
 test('classifies oversized images for downscaling', () => {
